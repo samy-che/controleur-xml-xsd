@@ -56,3 +56,14 @@ jobs:
       - name: Publication
         id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          # Le défaut est de 600000 ms (10 min), au terme desquelles l'action
+          # ANNULE le déploiement. Or la publication prend ici près de 8 minutes
+          # côté GitHub : on passait juste sous la limite, puis juste au-dessus.
+          # 30 minutes laissent une marge confortable ; si la publication est
+          # rapide, l'étape se termine dès qu'elle aboutit — rien n'est perdu.
+          timeout: 1800000
+          # Un relevé toutes les 20 s au lieu de 5 s : des logs lisibles.
+          reporting_interval: 20000
+          # Tolère quelques erreurs transitoires de l'API d'état.
+          error_count: 20
