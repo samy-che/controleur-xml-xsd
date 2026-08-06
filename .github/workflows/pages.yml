@@ -1,0 +1,58 @@
+# Publie le site sur GitHub Pages à chaque push sur main.
+#
+# Ce workflow ne fonctionne que si le dépôt est réglé sur :
+#   Settings → Pages → Build and deployment → Source : « GitHub Actions »
+# (avec le réglage « Deploy from a branch », c'est un workflow interne à GitHub
+#  qui publie, et celui-ci échouerait faute de cible.)
+#
+# Le site est un ensemble de fichiers statiques : rien à compiler, on téléverse
+# le dépôt tel quel. `upload-pages-artifact` exclut .git et .github d'office.
+
+name: Déploiement GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:        # permet de relancer à la main depuis l'onglet Actions
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Une seule publication à la fois, sans annuler celle qui est en cours.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Récupération du dépôt
+        uses: actions/checkout@v5
+
+      - name: Configuration de Pages
+        uses: actions/configure-pages@v5
+
+      - name: Vérification des fichiers indispensables
+        run: |
+          for f in index.html .nojekyll assets/app.js xsdfix/webapi.py samples/manifest.json; do
+            if [ ! -f "$f" ]; then
+              echo "::error::fichier manquant : $f"
+              exit 1
+            fi
+          done
+          echo "Tous les fichiers indispensables sont présents."
+
+      - name: Préparation de l'archive du site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+      - name: Publication
+        id: deployment
+        uses: actions/deploy-pages@v4
