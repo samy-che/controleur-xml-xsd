@@ -21,8 +21,11 @@ gh auth login
 gh repo create controleur-xml-xsd --public --source=. --push
 ```
 
-Puis, dans le dépôt sur GitHub : **Settings → Pages → Source : Deploy from a
-branch → Branch : `main` / `(root)` → Save**.
+Puis, dans le dépôt sur GitHub : **Settings → Pages → Build and deployment →
+Source : GitHub Actions**.
+
+Le statut `deployment_queued` affiché par l’action de déploiement est normal :
+il signifie que GitHub a bien créé la publication et qu’elle attend son tour.
 
 Une minute plus tard, le site est en ligne :
 `https://<votre-compte>.github.io/controleur-xml-xsd/`

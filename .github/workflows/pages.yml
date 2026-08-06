@@ -55,7 +55,7 @@ jobs:
 
       - name: Publication
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
         with:
           # Le défaut est de 600000 ms (10 min), au terme desquelles l'action
           # ANNULE le déploiement. Or la publication prend ici près de 8 minutes
