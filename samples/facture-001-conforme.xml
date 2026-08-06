@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Facture xmlns="urn:demo:facture:1.0" version="1.0">
+  <Entete>
+    <Numero>FA-2026-001</Numero>
+    <DateEmission>2026-01-15</DateEmission>
+    <DateEcheance>2026-02-14</DateEcheance>
+    <Devise>EUR</Devise>
+  </Entete>
+  <Vendeur>
+    <Nom>Société Démo SARL</Nom>
+    <Siret>81234567800017</Siret>
+    <NumeroTVA>FR40812345678</NumeroTVA>
+    <Adresse>
+      <Rue>12 rue des Lilas</Rue>
+      <CodePostal>75011</CodePostal>
+      <Ville>Paris</Ville>
+      <Pays>FR</Pays>
+    </Adresse>
+  </Vendeur>
+  <Client>
+    <Nom>Client Exemple SA</Nom>
+    <Siret>52098765400023</Siret>
+    <Adresse>
+      <Rue>4 avenue du Port</Rue>
+      <CodePostal>44000</CodePostal>
+      <Ville>Nantes</Ville>
+      <Pays>FR</Pays>
+    </Adresse>
+  </Client>
+  <Lignes>
+    <Ligne numero="1">
+      <Designation>Prestation de conseil</Designation>
+      <Quantite>3</Quantite>
+      <PrixUnitaireHT>450.00</PrixUnitaireHT>
+      <TauxTVA>20.0</TauxTVA>
+      <MontantHT>1350.00</MontantHT>
+    </Ligne>
+    <Ligne numero="2">
+      <Designation>Support technique</Designation>
+      <Quantite>10</Quantite>
+      <PrixUnitaireHT>75.00</PrixUnitaireHT>
+      <TauxTVA>20.0</TauxTVA>
+      <MontantHT>750.00</MontantHT>
+    </Ligne>
+  </Lignes>
+  <Totaux>
+    <TotalHT>2100.00</TotalHT>
+    <TotalTVA>420.00</TotalTVA>
+    <TotalTTC>2520.00</TotalTTC>
+  </Totaux>
+</Facture>

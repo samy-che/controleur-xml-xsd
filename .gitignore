@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+.claude/settings.local.json
+
+# Garde-fou : ce dépôt est public. Les vraies factures déposées dans ces
+# dossiers ne partiront jamais sur GitHub, même avec un « git add . ».
+/corriges/
+/factures/
+/prive/
+/mes-fichiers/

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Erreurs : ordre des balises inverse dans Entete, Adresse, Ligne et Totaux -->
+<Facture xmlns="urn:demo:facture:1.0" version="1.0">
+  <Entete>
+    <Devise>EUR</Devise>
+    <Numero>FA-2026-002</Numero>
+    <DateEcheance>2026-02-28</DateEcheance>
+    <DateEmission>2026-01-29</DateEmission>
+  </Entete>
+  <Vendeur>
+    <Adresse>
+      <Ville>Paris</Ville>
+      <Rue>12 rue des Lilas</Rue>
+      <Pays>FR</Pays>
+      <CodePostal>75011</CodePostal>
+    </Adresse>
+    <Nom>Société Démo SARL</Nom>
+    <Siret>81234567800017</Siret>
+  </Vendeur>
+  <Client>
+    <Nom>Entreprise Fictive SAS</Nom>
+    <Adresse>
+      <Rue>8 rue de l Exemple</Rue>
+      <CodePostal>69002</CodePostal>
+      <Ville>Lyon</Ville>
+      <Pays>FR</Pays>
+    </Adresse>
+  </Client>
+  <Totaux>
+    <TotalTTC>1200.00</TotalTTC>
+    <TotalHT>1000.00</TotalHT>
+    <TotalTVA>200.00</TotalTVA>
+  </Totaux>
+  <Lignes>
+    <Ligne numero="1">
+      <Quantite>2</Quantite>
+      <Designation>Audit de conformite</Designation>
+      <MontantHT>1000.00</MontantHT>
+      <PrixUnitaireHT>500.00</PrixUnitaireHT>
+      <TauxTVA>20.0</TauxTVA>
+    </Ligne>
+  </Lignes>
+</Facture>

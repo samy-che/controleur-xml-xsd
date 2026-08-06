@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Erreurs : espace de noms absent + ordre des balises + espaces parasites -->
+<Facture version="1.0">
+  <Entete>
+    <Numero>FA-2026-003</Numero>
+    <Devise>EUR</Devise>
+    <DateEmission>2026-02-03</DateEmission>
+  </Entete>
+  <Vendeur>
+    <Nom>Société Démo SARL</Nom>
+    <Adresse>
+      <Rue>12 rue des Lilas</Rue>
+      <CodePostal>75011</CodePostal>
+      <Ville>Paris</Ville>
+      <Pays>FR</Pays>
+    </Adresse>
+  </Vendeur>
+  <Client>
+    <Nom>Bureau Fictif</Nom>
+    <Adresse>
+      <Rue>2 rue Nationale</Rue>
+      <CodePostal>59000</CodePostal>
+      <Ville>Lille</Ville>
+      <Pays>  FR  </Pays>
+    </Adresse>
+  </Client>
+  <Lignes>
+    <Ligne numero="1">
+      <Designation>Licence annuelle</Designation>
+      <Quantite>1</Quantite>
+      <PrixUnitaireHT>  2400.00  </PrixUnitaireHT>
+      <TauxTVA>20.0</TauxTVA>
+      <MontantHT>2400.00</MontantHT>
+    </Ligne>
+  </Lignes>
+  <Totaux>
+    <TotalHT>2400.00</TotalHT>
+    <TotalTVA>480.00</TotalTVA>
+    <TotalTTC>2880.00</TotalTTC>
+  </Totaux>
+</Facture>

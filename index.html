@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contrôleur XML / XSD</title>
+<meta name="description" content="Vérifiez des fichiers XML face à un schéma XSD et générez automatiquement les fichiers corrigés. Tout se passe dans votre navigateur : aucun fichier n'est envoyé sur un serveur.">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🧾</text></svg>">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap">
+    <h1>Contrôleur XML / XSD</h1>
+    <p>Déposez vos factures XML et le schéma XSD de référence : les fichiers non
+       conformes sont analysés puis corrigés automatiquement.</p>
+    <p class="engine" id="engine-status">Initialisation…</p>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="panel">
+    <div class="dropzones">
+      <div class="dropzone" id="dz-xsd" data-kind="xsd">
+        <input type="file" id="input-xsd" accept=".xsd,application/xml,text/xml" multiple hidden>
+        <div class="dz-icon">📐</div>
+        <h2>Schéma XSD</h2>
+        <p class="dz-hint">Votre source de vérité. Glissez le fichier <code>.xsd</code>
+           (et ses éventuels schémas importés).</p>
+        <button type="button" class="btn ghost" data-browse="input-xsd">Choisir un fichier</button>
+        <ul class="filelist" id="list-xsd"></ul>
+        <div class="mainxsd hidden" id="mainxsd-row">
+          <label for="select-main">Schéma principal&nbsp;:</label>
+          <select id="select-main"></select>
+        </div>
+      </div>
+
+      <div class="dropzone" id="dz-xml" data-kind="xml">
+        <input type="file" id="input-xml" accept=".xml,application/xml,text/xml" multiple hidden>
+        <div class="dz-icon">🧾</div>
+        <h2>Fichiers XML</h2>
+        <p class="dz-hint">Autant de factures que nécessaire. Glissez-les ici, ou un dossier entier.</p>
+        <button type="button" class="btn ghost" data-browse="input-xml">Choisir des fichiers</button>
+        <ul class="filelist" id="list-xml"></ul>
+      </div>
+    </div>
+
+    <details class="options">
+      <summary>Options de correction</summary>
+      <div class="option-grid">
+        <label class="opt">
+          <input type="checkbox" id="opt-reorder" checked>
+          <span><strong>Réordonner les balises</strong>
+          Remet les éléments dans l'ordre imposé par le XSD (<code>xs:sequence</code>).</span>
+        </label>
+        <label class="opt">
+          <input type="checkbox" id="opt-namespace" checked>
+          <span><strong>Corriger l'espace de noms</strong>
+          Ajoute ou retire le <code>xmlns</code> de la racine s'il ne correspond pas au schéma.</span>
+        </label>
+        <label class="opt">
+          <input type="checkbox" id="opt-trim" checked>
+          <span><strong>Nettoyer les valeurs</strong>
+          Retire les espaces parasites qui font échouer un format (date, code pays…).</span>
+        </label>
+        <label class="opt">
+          <input type="checkbox" id="opt-insert">
+          <span><strong>Ajouter les éléments obligatoires manquants</strong>
+          Insère les balises requises, <em>vides</em>, à la bonne position. À compléter à la main.</span>
+        </label>
+        <label class="opt">
+          <input type="checkbox" id="opt-remove">
+          <span><strong>Supprimer les balises inconnues</strong>
+          Retire les éléments absents du XSD. <em>Attention : perte de données.</em></span>
+        </label>
+      </div>
+    </details>
+
+    <div class="actions">
+      <button type="button" class="btn primary" id="btn-run" disabled>Analyser et corriger</button>
+      <button type="button" class="btn ghost" id="btn-reset">Réinitialiser</button>
+      <button type="button" class="btn ghost" id="btn-sample">Charger le jeu d'exemple</button>
+      <span class="status" id="status"></span>
+    </div>
+    <div class="progress hidden" id="progress"><span></span></div>
+  </section>
+
+  <section id="results" class="hidden">
+    <div class="summary" id="summary"></div>
+    <div class="results-actions">
+      <button type="button" class="btn primary hidden" id="btn-zip">Télécharger tous les corrigés (ZIP)</button>
+    </div>
+    <div id="cards"></div>
+  </section>
+
+  <section class="panel about">
+    <h2>Comment ça marche</h2>
+    <p>Le moteur de validation est <strong>lxml</strong> (libxml2), compilé en
+       WebAssembly et exécuté par votre navigateur. Vos fichiers ne sont
+       <strong>jamais envoyés sur un serveur</strong> : ils ne quittent pas votre
+       machine, ce qui compte quand on manipule des factures.</p>
+    <p>L'outil corrige l'ordre des balises, l'espace de noms de la racine et les
+       espaces parasites dans les valeurs. En option, il peut ajouter les
+       éléments obligatoires manquants (vides) et supprimer les balises inconnues
+       du schéma. <strong>Aucune donnée métier n'est inventée</strong> : un
+       montant, une date ou un numéro manquant est signalé, jamais rempli
+       automatiquement.</p>
+    <p>Ce que l'outil ne fait pas : réécrire une valeur invalide, corriger les
+       attributs, réparer un XML mal formé, ni vérifier les règles hors XSD
+       (Schematron, EN&nbsp;16931…).</p>
+  </section>
+
+</main>
+
+<footer class="wrap foot">
+  Traitement 100&nbsp;% local, dans votre navigateur — aucun fichier n'est
+  téléversé. Seul le moteur WebAssembly est téléchargé depuis un CDN au premier
+  chargement, puis mis en cache.
+</footer>
+
+<script src="assets/app.js"></script>
+</body>
+</html>

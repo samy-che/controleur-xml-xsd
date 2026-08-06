@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Erreurs : element obligatoire absent (Adresse du Client), balise inconnue
+     du XSD (<Remise>), et ordre inverse dans Totaux -->
+<Facture xmlns="urn:demo:facture:1.0" version="1.0">
+  <Entete>
+    <Numero>FA-2026-004</Numero>
+    <DateEmission>2026-02-11</DateEmission>
+    <Devise>EUR</Devise>
+  </Entete>
+  <Vendeur>
+    <Nom>Société Démo SARL</Nom>
+    <Adresse>
+      <Rue>12 rue des Lilas</Rue>
+      <CodePostal>75011</CodePostal>
+      <Ville>Paris</Ville>
+      <Pays>FR</Pays>
+    </Adresse>
+  </Vendeur>
+  <Client>
+    <Nom>Studio Fictif</Nom>
+  </Client>
+  <Lignes>
+    <Ligne numero="1">
+      <Designation>Maintenance trimestrielle</Designation>
+      <Quantite>1</Quantite>
+      <PrixUnitaireHT>600.00</PrixUnitaireHT>
+      <Remise>10</Remise>
+      <TauxTVA>20.0</TauxTVA>
+      <MontantHT>540.00</MontantHT>
+    </Ligne>
+  </Lignes>
+  <Totaux>
+    <TotalTVA>108.00</TotalTVA>
+    <TotalHT>540.00</TotalHT>
+    <TotalTTC>648.00</TotalTTC>
+  </Totaux>
+</Facture>

@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns="urn:demo:facture:1.0"
+           targetNamespace="urn:demo:facture:1.0"
+           elementFormDefault="qualified">
+
+  <xs:element name="Facture" type="FactureType"/>
+
+  <xs:complexType name="FactureType">
+    <xs:sequence>
+      <xs:element name="Entete" type="EnteteType"/>
+      <xs:element name="Vendeur" type="PartieType"/>
+      <xs:element name="Client" type="PartieType"/>
+      <xs:element name="Lignes" type="LignesType"/>
+      <xs:element name="Totaux" type="TotauxType"/>
+      <xs:element name="Commentaire" type="xs:string" minOccurs="0"/>
+    </xs:sequence>
+    <xs:attribute name="version" type="xs:string" use="required"/>
+  </xs:complexType>
+
+  <xs:complexType name="EnteteType">
+    <xs:sequence>
+      <xs:element name="Numero" type="xs:string"/>
+      <xs:element name="DateEmission" type="xs:date"/>
+      <xs:element name="DateEcheance" type="xs:date" minOccurs="0"/>
+      <xs:element name="Devise" type="DeviseType"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:simpleType name="DeviseType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="EUR"/>
+      <xs:enumeration value="USD"/>
+      <xs:enumeration value="GBP"/>
+      <xs:enumeration value="CHF"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:complexType name="PartieType">
+    <xs:sequence>
+      <xs:element name="Nom" type="xs:string"/>
+      <xs:element name="Siret" type="SiretType" minOccurs="0"/>
+      <xs:element name="NumeroTVA" type="xs:string" minOccurs="0"/>
+      <xs:element name="Adresse" type="AdresseType"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:simpleType name="SiretType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9]{14}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:complexType name="AdresseType">
+    <xs:sequence>
+      <xs:element name="Rue" type="xs:string"/>
+      <xs:element name="CodePostal" type="xs:string"/>
+      <xs:element name="Ville" type="xs:string"/>
+      <xs:element name="Pays" type="PaysType"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:simpleType name="PaysType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[A-Z]{2}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:complexType name="LignesType">
+    <xs:sequence>
+      <xs:element name="Ligne" type="LigneType" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="LigneType">
+    <xs:sequence>
+      <xs:element name="Designation" type="xs:string"/>
+      <xs:element name="Quantite" type="xs:decimal"/>
+      <xs:element name="PrixUnitaireHT" type="xs:decimal"/>
+      <xs:element name="TauxTVA" type="xs:decimal"/>
+      <xs:element name="MontantHT" type="xs:decimal"/>
+    </xs:sequence>
+    <xs:attribute name="numero" type="xs:positiveInteger" use="required"/>
+  </xs:complexType>
+
+  <xs:complexType name="TotauxType">
+    <xs:sequence>
+      <xs:element name="TotalHT" type="xs:decimal"/>
+      <xs:element name="TotalTVA" type="xs:decimal"/>
+      <xs:element name="TotalTTC" type="xs:decimal"/>
+    </xs:sequence>
+  </xs:complexType>
+
+</xs:schema>

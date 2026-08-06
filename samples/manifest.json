@@ -1,0 +1,22 @@
+[
+  {
+    "name": "facture-001-conforme.xml",
+    "kind": "xml"
+  },
+  {
+    "name": "facture-002-ordre-balises.xml",
+    "kind": "xml"
+  },
+  {
+    "name": "facture-003-sans-namespace.xml",
+    "kind": "xml"
+  },
+  {
+    "name": "facture-004-elements-manquants.xml",
+    "kind": "xml"
+  },
+  {
+    "name": "facture.xsd",
+    "kind": "xsd"
+  }
+]
