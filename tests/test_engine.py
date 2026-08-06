@@ -339,6 +339,43 @@ class TestPreservation(unittest.TestCase):
         self.assertIn("mal formé", report.results[0].fatal)
 
 
+class TestDiagnostic(unittest.TestCase):
+    """Le rapport doit rester informatif même quand la racine est rejetée."""
+
+    XSD = HEAD + '''
+      <xs:element name="R"><xs:complexType><xs:sequence>
+        <xs:element name="A" type="xs:string"/>
+        <xs:element name="B" type="xs:string"/>
+      </xs:sequence></xs:complexType></xs:element>
+    </xs:schema>'''
+
+    def test_racine_rejetee_ne_masque_pas_les_erreurs_internes(self):
+        """Une racine invalide fait s'arrêter lxml : corriger la racine révèle
+        les erreurs qu'elle masquait. Le compte d'erreurs augmente alors que le
+        fichier s'améliore — le rapport ne doit rien jeter."""
+        xml = '<R><B>2</B><A>1</A><Inconnu/></R>'      # pas de namespace + ordre + balise inconnue
+        result = run(self.XSD, xml)
+        self.assertEqual(len(result.errors_before), 1)          # lxml s'arrête à la racine
+        self.assertEqual(result.errors_before[0].category, "racine")
+        self.assertEqual(result.status, STATUS_PARTIAL)
+        self.assertTrue(result.changes, "les corrections doivent être rapportées")
+        self.assertTrue(result.errors_after, "les erreurs révélées doivent être rapportées")
+        self.assertIsNotNone(result.corrected)
+        self.assertIn("racine était rejeté", result.note or "")
+
+    def test_message_racine_liste_les_racines_acceptees(self):
+        result = run(self.XSD, '<Autre xmlns="urn:t"><A>1</A></Autre>')
+        message = result.errors_before[0].label
+        self.assertIn("<Autre>", message)
+        self.assertIn("urn:t", message)          # l'espace de noms attendu est cité
+        self.assertIn("<R>", message)            # la racine acceptée est citée
+
+    def test_aucune_correction_possible(self):
+        result = run(self.XSD, '<Autre xmlns="urn:t"/>')
+        self.assertEqual(result.status, STATUS_FAILED)
+        self.assertEqual(result.changes, [])
+
+
 class TestSchemaMultiFichiers(unittest.TestCase):
 
     def test_import_multi_namespaces_prefixes_conserves(self):
@@ -371,6 +408,39 @@ class TestSchemaMultiFichiers(unittest.TestCase):
         # les prefixes d'origine doivent survivre a la correction
         self.assertIn(b"<ram:Numero>", result.corrected)
         self.assertIn(b"<rsm:Facture", result.corrected)
+
+    def test_import_par_chemin_relatif_fichiers_a_plat(self):
+        """Cas UBL : le XSD importe « ../common/x.xsd » mais les fichiers ont été
+        déposés à plat. Les chemins doivent être réparés automatiquement."""
+        main = ('<?xml version="1.0"?>'
+                '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" '
+                'xmlns:c="urn:c" targetNamespace="urn:t" xmlns="urn:t" '
+                'elementFormDefault="qualified">'
+                '<xs:import namespace="urn:c" schemaLocation="../common/types.xsd"/>'
+                '<xs:element name="R"><xs:complexType><xs:sequence>'
+                '<xs:element ref="c:A"/><xs:element ref="c:B"/>'
+                '</xs:sequence></xs:complexType></xs:element></xs:schema>')
+        common = ('<?xml version="1.0"?>'
+                  '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" '
+                  'targetNamespace="urn:c" elementFormDefault="qualified">'
+                  '<xs:element name="A" type="xs:string"/>'
+                  '<xs:element name="B" type="xs:string"/></xs:schema>')
+        xml = ('<R xmlns="urn:t" xmlns:c="urn:c">'
+               '<c:B>2</c:B><c:A>1</c:A></R>')
+        result = run(main, xml, extra_xsd={"types.xsd": common})   # noms à plat
+        self.assertEqual(result.status, STATUS_FIXED)
+        self.assertEqual(order_of(result), ["A", "B"])
+
+    def test_import_manquant_signale_le_fichier(self):
+        main = ('<?xml version="1.0"?>'
+                '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" '
+                'targetNamespace="urn:t" xmlns="urn:t">'
+                '<xs:import namespace="urn:c" schemaLocation="common/types.xsd"/>'
+                '<xs:element name="R" type="xs:string"/></xs:schema>')
+        report = analyze([InputFile("main.xsd", main.encode())],
+                         [InputFile("d.xml", b'<R xmlns="urn:t"/>')], Options())
+        self.assertTrue(any("types.xsd" in w for w in report.schema_warnings),
+                        report.schema_warnings)
 
     def test_include(self):
         main = (HEAD + '<xs:include schemaLocation="types.xsd"/>'

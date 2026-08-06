@@ -70,6 +70,22 @@ Téléchargez chaque fichier corrigé individuellement, ou tous d'un coup en ZIP
 Le bouton **Charger le jeu d'exemple** remplit l'application avec les fichiers
 de `samples/` : une facture conforme et trois fautives.
 
+### Schémas en plusieurs fichiers (UBL, Factur-X…)
+
+Les schémas normalisés sont découpés en dizaines de fichiers qui s'importent
+entre eux par chemins relatifs (`../common/UBL-CommonBasicComponents-2.1.xsd`).
+Deux façons de les fournir, les deux fonctionnent :
+
+- **glissez le dossier entier** : l'arborescence est conservée telle quelle ;
+- **déposez tous les `.xsd` en vrac** : l'application répare d'elle-même les
+  chemins d'import en retrouvant chaque fichier par son nom.
+
+Si un import reste introuvable, le fichier manquant est nommé explicitement
+dans le rapport — c'est presque toujours la cause d'un « XSD invalide ».
+
+Quand plusieurs XSD sont déposés, un menu permet de désigner le schéma
+principal ; par défaut c'est celui qu'aucun autre n'importe.
+
 ### Premier chargement
 
 Le navigateur télécharge ≈ 8 Mo (Python + lxml en WebAssembly) à la première
@@ -143,6 +159,12 @@ casserait le document : `xs:all` (ordre libre), groupes répétés `(A,B)*`,
 de substitution, `elementFormDefault="unqualified"`, schémas multi-fichiers
 (`xs:include`, `xs:import` multi-espaces de noms façon Factur-X / UBL), ainsi
 que la conservation des attributs, commentaires et encodages (dont ISO-8859-1).
+
+Ils couvrent aussi un piège de diagnostic : quand l'élément racine est rejeté,
+le validateur s'arrête immédiatement et ne signale qu'une seule erreur. Corriger
+la racine fait apparaître toutes celles qu'elle masquait — le nombre d'erreurs
+augmente alors que le fichier s'améliore. Le rapport ne doit donc jamais juger
+une correction sur le décompte d'erreurs.
 
 Le moteur étant strictement le même en local et dans le navigateur, ces tests
 valident aussi le site.

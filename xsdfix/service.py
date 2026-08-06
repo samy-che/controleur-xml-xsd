@@ -15,7 +15,7 @@ from lxml import etree
 
 from .corrector import Change, Options, correct
 from .schema_model import SchemaSet, split_tag
-from .validator import CAT_ORDER, CAT_UNEXPECTED, ValidationError, Validator
+from .validator import CAT_ORDER, CAT_ROOT, CAT_UNEXPECTED, ValidationError, Validator
 
 STATUS_VALID = "valid"        # deja conforme
 STATUS_FIXED = "fixed"        # corrige et desormais conforme
@@ -40,6 +40,7 @@ class FileReport:
     corrected: Optional[bytes] = None
     corrected_name: Optional[str] = None
     fatal: Optional[str] = None
+    note: Optional[str] = None
     encoding: str = "UTF-8"
 
     def as_dict(self, include_content: bool = True) -> Dict:
@@ -51,6 +52,7 @@ class FileReport:
             "changes": [c.as_dict() for c in self.changes],
             "correctedName": self.corrected_name,
             "fatal": self.fatal,
+            "note": self.note,
         }
         if include_content and self.corrected is not None:
             # l'apercu est decode avec l'encodage reel du document, sinon les
@@ -79,15 +81,36 @@ class AnalysisReport:
         }
 
 
-def _refine(errors: List[ValidationError], schema: SchemaSet) -> List[ValidationError]:
-    """lxml signale de la meme facon une balise mal placee et une balise inconnue.
-    On tranche en regardant si le nom existe quelque part dans le XSD."""
+def _describe_roots(schema: SchemaSet) -> str:
+    """Liste les racines acceptees par le XSD, pour un message d'erreur utile."""
+    roots = sorted(schema.global_elements)
+    if not roots:
+        return ("Ce XSD ne déclare aucun élément global : il ne peut servir de schéma "
+                "principal. Il s'agit sans doute d'un fichier de types importé par un "
+                "autre XSD — fournissez le schéma principal.")
+    shown = ["<%s>%s" % (local, " dans l'espace de noms « %s »" % ns if ns
+                         else " (sans espace de noms)")
+             for ns, local in roots[:6]]
+    suite = " (et %d autre(s))" % (len(roots) - 6) if len(roots) > 6 else ""
+    return "Ce XSD accepte comme racine : " + " ; ".join(shown) + suite + "."
+
+
+def _refine(errors: List[ValidationError], schema: SchemaSet,
+            root_qname=None) -> List[ValidationError]:
+    """Affine les messages bruts de lxml avec ce que l'on sait du schema."""
     for error in errors:
         if error.category == CAT_ORDER and error.element:
             if error.element not in schema.declared_names:
                 error.category = CAT_UNEXPECTED
                 error.label = ("<%s> n'est déclaré nulle part dans le XSD : balise inconnue."
                                % error.element)
+        elif error.category == CAT_ROOT and root_qname is not None:
+            ns, local = root_qname
+            trouve = ("dans l'espace de noms « %s »" % ns if ns
+                      else "sans espace de noms")
+            error.label = ("Le XSD n'accepte pas <%s> comme élément racine. "
+                           "Votre fichier commence par <%s> %s. %s" %
+                           (local, local, trouve, _describe_roots(schema)))
     return errors
 
 
@@ -96,13 +119,70 @@ def _corrected_name(name: str) -> str:
     return "%s_corrige%s" % (base, ext or ".xml")
 
 
+_RE_LOCATION = re.compile(r'schemaLocation\s*=\s*(["\'])(.*?)\1')
+
+
+def safe_relpath(name: str) -> str:
+    """Conserve l'arborescence fournie, sans jamais sortir du dossier de travail."""
+    parts = [p for p in name.replace("\\", "/").split("/")
+             if p and p not in (".", "..")]
+    return os.path.join(*parts) if parts else "fichier.xsd"
+
+
+def repair_schema_locations(workdir: str, written: List[str]) -> List[str]:
+    """Rend les xs:import / xs:include resolubles, quelle que soit l'arborescence.
+
+    Les schemas normalises (UBL, Factur-X…) s'importent par chemins relatifs
+    (`../common/X.xsd`). Si l'utilisateur depose les fichiers a plat, ces chemins
+    ne pointent nulle part. On les reecrit vers le fichier de meme nom
+    effectivement fourni. Renvoie la liste des imports introuvables.
+    """
+    index = {os.path.basename(rel): rel for rel in written}
+    missing: List[str] = []
+
+    for rel in written:
+        path = os.path.join(workdir, rel)
+        try:
+            with open(path, "r", encoding="utf-8", errors="surrogateescape") as handle:
+                text = handle.read()
+        except OSError:
+            continue
+
+        def replace(match):
+            quote, location = match.group(1), match.group(2)
+            if not location or "://" in location:
+                return match.group(0)
+            target = os.path.normpath(os.path.join(os.path.dirname(rel), location))
+            if os.path.exists(os.path.join(workdir, target)):
+                return match.group(0)
+            candidate = index.get(os.path.basename(location))
+            if candidate is None:
+                missing.append(os.path.basename(location))
+                return match.group(0)
+            fixed = os.path.relpath(os.path.join(workdir, candidate),
+                                    os.path.dirname(path))
+            return "schemaLocation=%s%s%s" % (quote, fixed, quote)
+
+        repaired = _RE_LOCATION.sub(replace, text)
+        if repaired != text:
+            with open(path, "w", encoding="utf-8", errors="surrogateescape") as handle:
+                handle.write(repaired)
+
+    return sorted(set(missing))
+
+
 def pick_main_xsd(xsds: List[InputFile], preferred: Optional[str] = None) -> Optional[str]:
     """Determine le XSD principal : celui qui n'est importe/inclus par aucun autre."""
     if not xsds:
         return None
     names = [f.name for f in xsds]
-    if preferred and preferred in names:
-        return preferred
+    if preferred:
+        if preferred in names:
+            return preferred
+        # tolere un nom donne sans son arborescence
+        for name in names:
+            if os.path.basename(name) == os.path.basename(preferred):
+                return name
     if len(xsds) == 1:
         return names[0]
 
@@ -137,20 +217,32 @@ class Session:
             self.error = "Aucun XSD fourni."
             return
 
+        written: List[str] = []
         for item in xsds:
-            path = os.path.join(self.workdir, os.path.basename(item.name))
+            relative = safe_relpath(item.name)
+            path = os.path.join(self.workdir, relative)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "wb") as handle:
                 handle.write(item.data)
+            written.append(relative)
+
+        missing = repair_schema_locations(self.workdir, written)
+        if missing:
+            self.warnings.append(
+                "schéma(s) importé(s) mais non fourni(s) : %s — ajoutez ces fichiers "
+                "au dépôt du XSD, sinon la validation sera incomplète."
+                % ", ".join(missing))
 
         self.main_xsd = pick_main_xsd(xsds, preferred_xsd)
-        main_path = os.path.join(self.workdir, os.path.basename(self.main_xsd))
+        main_path = os.path.join(self.workdir, safe_relpath(self.main_xsd))
 
         self.validator = Validator(main_path)
         if not self.validator.ok:
-            self.error = "XSD invalide : %s" % self.validator.error
+            hint = (" — cause probable : %s" % self.warnings[0]) if missing else ""
+            self.error = "XSD invalide : %s%s" % (self.validator.error, hint)
             return
         self.schema = SchemaSet(main_path)
-        self.warnings = list(self.schema.load_errors)
+        self.warnings.extend(self.schema.load_errors)
 
     @property
     def ok(self) -> bool:
@@ -166,7 +258,8 @@ class Session:
             return result
 
         result.encoding = tree.docinfo.encoding or "UTF-8"
-        result.errors_before = _refine(self.validator.validate(tree), self.schema)
+        root_qname = split_tag(tree.getroot().tag)
+        result.errors_before = _refine(self.validator.validate(tree), self.schema, root_qname)
         if not result.errors_before:
             result.status = STATUS_VALID
             return result
@@ -181,26 +274,34 @@ class Session:
         result.changes = changes
         try:
             new_tree = etree.fromstring(corrected, self._parser).getroottree()
-            result.errors_after = _refine(self.validator.validate(new_tree), self.schema)
+            result.errors_after = _refine(self.validator.validate(new_tree), self.schema,
+                                          split_tag(new_tree.getroot().tag))
         except etree.XMLSyntaxError as exc:
             result.status = STATUS_FAILED
             result.fatal = "Le fichier corrigé n'est pas relisible : %s" % exc
             return result
 
+        # Attention : on ne compare surtout pas le NOMBRE d'erreurs avant/apres.
+        # Quand la racine est rejetee, lxml s'arrete immediatement et ne signale
+        # qu'une seule erreur ; corriger la racine fait apparaitre toutes celles
+        # qu'elle masquait. Le compte augmente alors que le fichier s'ameliore.
         if not result.errors_after:
             result.status = STATUS_FIXED
-            result.corrected = corrected
-            result.corrected_name = _corrected_name(item.name)
-        elif changes and len(result.errors_after) < len(result.errors_before):
+        elif changes:
             result.status = STATUS_PARTIAL
+        else:
+            result.status = STATUS_FAILED
+
+        if changes:
             result.corrected = corrected
             result.corrected_name = _corrected_name(item.name)
-        else:
-            # aucune amelioration mesurable : on ne propose pas de fichier corrige,
-            # mieux vaut rendre la main que livrer un XML douteux
-            result.status = STATUS_FAILED
-            result.errors_after = []      # la liste « erreurs détectées » suffit
-            result.changes = []
+
+        if any(e.category == CAT_ROOT for e in result.errors_before) and result.errors_after:
+            result.note = (
+                "L'élément racine était rejeté : le validateur s'arrête là et ne peut "
+                "pas examiner le contenu du fichier. Les erreurs ci-dessous n'ont pu "
+                "être découvertes qu'une fois la racine corrigée — elles étaient déjà "
+                "présentes dans le fichier d'origine.")
         return result
 
     def close(self) -> None:

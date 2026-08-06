@@ -123,6 +123,12 @@ function saveFile(name, bytes, mime) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
+/* Nom transmis au moteur : on garde l'arborescence quand on connaît, car les
+   schémas normalisés (UBL…) s'importent par chemins relatifs `../common/x.xsd`. */
+function relName(file) {
+  return file.relPath || file.webkitRelativePath || file.name;
+}
+
 function addFiles(kind, files) {
   for (const file of files) {
     const name = file.name.toLowerCase();
@@ -160,7 +166,7 @@ function renderFiles() {
     select.innerHTML = '<option value="">détection automatique</option>';
     state.xsd.forEach((file) => {
       const option = document.createElement("option");
-      option.value = file.name;
+      option.value = relName(file);
       option.textContent = file.name;
       select.appendChild(option);
     });
@@ -192,7 +198,7 @@ async function run() {
 
     setProgress("Lecture des fichiers…", 0);
     const xsd = await Promise.all(state.xsd.map(async (file) => ({
-      name: file.name, content: await readAsBase64(file),
+      name: relName(file), content: await readAsBase64(file),
     })));
 
     const opened = JSON.parse(webapi.open_session(JSON.stringify({
@@ -308,6 +314,7 @@ function buildCard(result) {
   const body = el("div", "card-body");
   body.appendChild(el("p", "meta", STATUS_TEXT[result.status]));
   if (result.fatal) body.appendChild(el("div", "notice", result.fatal));
+  if (result.note) body.appendChild(el("div", "notice info", result.note));
 
   const errorItem = (cls) => (error) => {
     const li = el("li", cls);
@@ -394,7 +401,12 @@ function collectEntries(dataTransfer) {
 function walkEntry(entry, out) {
   return new Promise((resolve) => {
     if (entry.isFile) {
-      entry.file((file) => { out.push(file); resolve(); }, resolve);
+      entry.file((file) => {
+        // fullPath vaut par ex. "/xsd/common/UBL-CommonBasicComponents-2.1.xsd"
+        if (entry.fullPath) file.relPath = entry.fullPath.replace(/^\/+/, "");
+        out.push(file);
+        resolve();
+      }, resolve);
     } else if (entry.isDirectory) {
       const reader = entry.createReader();
       const readBatch = () => {
