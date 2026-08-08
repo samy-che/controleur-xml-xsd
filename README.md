@@ -109,6 +109,40 @@ La cause la plus fréquente d'un rejet de la racine : un XSD **sans
 Les deux décrivent alors des mondes différents, et aucune correction
 automatique ne peut les réconcilier — il faut le schéma correspondant.
 
+### XSD généré depuis un XML d'exemple : à convertir d'abord
+
+Les générateurs en ligne (Liquid Technologies, XmlGrid, FreeFormatter…) qui
+déduisent un XSD à partir d'un XML **ne gèrent pas les espaces de noms**. Ils
+produisent un schéma reconnaissable à deux signes :
+
+- pas de `targetNamespace` sur `<xs:schema>` ;
+- des noms de balises qui contiennent le préfixe : `name="cbc.UBLVersionID"`
+  au lieu de `ref="cbc:UBLVersionID"`.
+
+Un tel schéma **ne peut valider aucun XML à espaces de noms**, pas même celui
+dont il est issu : pour un validateur, `cbc.UBLVersionID` est un nom contenant
+un point, sans rapport avec `UBLVersionID` dans l'espace de noms `cbc`. Ce
+n'est pas une limite de cet outil — `xmllint` refuse exactement pareil.
+
+Le convertisseur rétablit la sémantique perdue **sans toucher à l'ordre des
+balises** que vous avez défini :
+
+```bash
+python3 convertir_xsd.py mon-schema.xsd --depuis-xml une-facture.xml --out schema-converti
+```
+
+Les espaces de noms sont appris depuis les déclarations `xmlns:` du XML fourni
+(ou indiqués à la main avec `--ns prefixe=uri`). Il produit un fichier par
+espace de noms, à déposer tous ensemble dans l'application, en désignant
+`ubl.xsd` comme schéma principal.
+
+Un point mérite votre attention dans le rapport de conversion : le générateur
+a pu déclarer un même nom avec des formes différentes selon le contexte
+(`cbc.ID` typé `xs:short` en tête de facture, mais texte dans
+`cac:OrderReference`). En XSD un élément global n'a qu'une seule définition :
+le convertisseur les réconcilie et **liste chaque arbitrage**. Relisez cette
+liste, c'est là que la conversion perd en précision.
+
 ### Premier chargement
 
 Le navigateur télécharge ≈ 8 Mo (Python + lxml en WebAssembly) à la première
@@ -211,6 +245,7 @@ xsdfix/              le moteur, chargé tel quel par le navigateur
   webapi.py          frontière Python ↔ navigateur (JSON / base64)
 cli.py               même moteur, en ligne de commande
 diagnostic.py        extrait la structure XSD/XML sans divulguer de données
+convertir_xsd.py     remet les espaces de noms dans un XSD généré « à plat »
 samples/             jeu d'exemple
 tests/               tests unitaires
 ```

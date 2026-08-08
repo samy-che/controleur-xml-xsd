@@ -506,5 +506,78 @@ class TestSchemaMultiFichiers(unittest.TestCase):
         self.assertEqual(order_of(result), ["A", "B"])
 
 
+class TestConvertisseur(unittest.TestCase):
+    """XSD « à plat » généré depuis un XML (Liquid Technologies & consorts) :
+    les préfixes sont devenus des morceaux de noms, l'espace de noms a disparu.
+    Le convertisseur doit rendre le schéma utilisable sans toucher à l'ordre."""
+
+    PLAT = ('<?xml version="1.0"?>'
+            '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" '
+            'elementFormDefault="qualified">'
+            '<xs:element name="ubl.Invoice"><xs:complexType><xs:sequence>'
+            '<xs:element name="cbc.ID" type="xs:short"/>'
+            '<xs:element name="cbc.IssueDate" type="xs:date"/>'
+            '<xs:element minOccurs="0" name="cac.OrderReference">'
+            '<xs:complexType><xs:sequence>'
+            '<xs:element name="cbc.ID" type="xs:string"/>'
+            '<xs:element name="cbc.SalesOrderID" type="xs:string"/>'
+            '</xs:sequence></xs:complexType></xs:element>'
+            '</xs:sequence></xs:complexType></xs:element></xs:schema>')
+
+    NS = {
+        "ubl": "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2",
+        "cbc": "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2",
+        "cac": "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2",
+    }
+
+    XML_DESORDRE = (
+        '<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" '
+        'xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2" '
+        'xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2">'
+        '<cbc:IssueDate>2026-07-31</cbc:IssueDate>'      # après ID selon le XSD
+        '<cbc:ID>12</cbc:ID>'
+        '<cac:OrderReference>'
+        '<cbc:SalesOrderID>X</cbc:SalesOrderID>'          # après ID selon le XSD
+        '<cbc:ID>PO-1</cbc:ID>'
+        '</cac:OrderReference></Invoice>')
+
+    def _convertir(self):
+        import tempfile
+        from convertir_xsd import Converter
+        workdir = tempfile.mkdtemp(prefix="conv_")
+        source = os.path.join(workdir, "plat.xsd")
+        with open(source, "w", encoding="utf-8") as handle:
+            handle.write(self.PLAT)
+        converter = Converter(dict(self.NS))
+        converter.read(source)
+        paths = converter.write(converter.merge(), os.path.join(workdir, "out"))
+        files = []
+        for path in paths:
+            with open(path, "rb") as handle:
+                files.append(InputFile(os.path.basename(path), handle.read()))
+        return converter, files
+
+    def test_la_racine_retrouve_son_espace_de_noms(self):
+        converter, files = self._convertir()
+        self.assertEqual(converter.root, ("ubl", "Invoice"))
+        self.assertEqual({f.name for f in files}, {"ubl.xsd", "cbc.xsd", "cac.xsd"})
+
+    def test_conflit_de_types_reconcilie(self):
+        """cbc.ID vaut xs:short en tête et xs:string plus bas : en XSD un élément
+        global n'a qu'un type, il faut trancher sans casser la validation."""
+        converter, _ = self._convertir()
+        self.assertTrue(any("cbc:ID" in c for c in converter.conflicts), converter.conflicts)
+
+    def test_ordre_detecte_et_corrige_apres_conversion(self):
+        _, files = self._convertir()
+        report = analyze(files, [InputFile("f.xml", self.XML_DESORDRE.encode())],
+                         Options(), preferred_xsd="ubl.xsd")
+        self.assertIsNone(report.schema_error)
+        result = report.results[0]
+        self.assertEqual(result.status, STATUS_FIXED)
+        self.assertEqual(len(result.errors_after), 0)
+        self.assertEqual(order_of(result), ["ID", "IssueDate", "OrderReference"])
+
+
 if __name__ == "__main__":
     unittest.main()
