@@ -568,6 +568,31 @@ class TestConvertisseur(unittest.TestCase):
         converter, _ = self._convertir()
         self.assertTrue(any("cbc:ID" in c for c in converter.conflicts), converter.conflicts)
 
+    def test_separateurs_multiples_et_noms_invalides(self):
+        """Certains générateurs alignent plusieurs séparateurs. Le reste ne doit
+        pas se retrouver dans le nom : « .DespatchDocumentReference » n'est pas
+        un nom XSD valide et ferait échouer la compilation."""
+        from xsdfix.flat_schema import compile_check, convert, split_prefixed
+        self.assertEqual(split_prefixed("cac...DespatchDocumentReference"),
+                         ("cac", "DespatchDocumentReference"))
+        self.assertEqual(split_prefixed("cac. .Truc"), ("cac", "Truc"))
+
+        plat = ('<?xml version="1.0"?>'
+                '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">'
+                '<xs:element name="ubl.Invoice"><xs:complexType><xs:sequence>'
+                '<xs:element name="cbc.ID" type="xs:string"/>'
+                '<xs:element name="cac...DespatchDocumentReference" type="xs:string"/>'
+                '<xs:element name="cbc.4Ligne" type="xs:string"/>'
+                '</xs:sequence></xs:complexType></xs:element></xs:schema>')
+        fichiers, racine, notes = convert(plat.encode(), dict(self.NS))
+        noms = {n for n, _ in fichiers}
+        self.assertIn("cac.xsd", noms)
+        # le schéma produit doit compiler : c'est le vrai critère
+        self.assertIsNone(compile_check(fichiers, "%s.xsd" % racine[0]))
+        contenu = b"".join(d for _, d in fichiers)
+        self.assertIn(b'name="DespatchDocumentReference"', contenu)
+        self.assertNotIn(b'name=".DespatchDocumentReference"', contenu)
+
     def test_ordre_detecte_et_corrige_apres_conversion(self):
         _, files = self._convertir()
         report = analyze(files, [InputFile("f.xml", self.XML_DESORDRE.encode())],

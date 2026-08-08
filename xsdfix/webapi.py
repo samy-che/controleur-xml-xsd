@@ -20,7 +20,7 @@ from typing import Dict, List, Optional
 from lxml import etree
 
 from .corrector import Options
-from .flat_schema import convert, looks_flat, namespaces_from_root
+from .flat_schema import compile_check, convert, looks_flat, namespaces_from_root
 from .service import AnalysisReport, InputFile, Session, build_zip
 
 _session: Optional[Session] = None
@@ -130,10 +130,19 @@ def convert_flat(payload_json: str) -> str:
         return json.dumps({"ok": False, "error":
                            "Conversion impossible : aucun préfixe du XSD ne correspond "
                            "aux espaces de noms du XML."})
+
+    main_name = "%s.xsd" % racine[0] if racine else fichiers[0][0]
+    probleme = compile_check(fichiers, main_name)
+    if probleme:
+        # on ne remet jamais un schéma cassé entre les mains de l'utilisateur
+        return json.dumps({"ok": False, "error":
+                           "Le schéma converti ne compile pas : %s" % probleme,
+                           "conflicts": conflits}, ensure_ascii=False)
+
     return json.dumps({
         "ok": True,
         "source": target[0],
-        "mainXsd": "%s.xsd" % racine[0] if racine else None,
+        "mainXsd": main_name,
         "conflicts": conflits,
         "files": [{"name": name,
                    "content": base64.b64encode(data).decode("ascii")}

@@ -23,8 +23,28 @@ from lxml import etree
 XS = "http://www.w3.org/2001/XMLSchema"
 NSMAP_XS = {"xs": XS}
 
-# « cbc.UBLVersionID », « cbc_UBLVersionID », « cbc..ID » → (cbc, UBLVersionID)
-RE_PREFIXED = re.compile(r"^([A-Za-z][A-Za-z0-9]{0,7})[._-]{1,2}(.+)$")
+# « cbc.UBLVersionID », « cbc_UBLVersionID », « cbc..ID », « cac...Truc »
+# → (cbc, UBLVersionID). Le séparateur est répété autant de fois qu'il le faut :
+# certains générateurs en alignent deux ou trois.
+RE_PREFIXED = re.compile(r"^([A-Za-z][A-Za-z0-9]{0,7})[._\- ]+(.+)$")
+
+# Un nom XSD est un NCName : lettre ou « _ » en tête, puis lettres, chiffres,
+# point, tiret ou souligné. Tout le reste doit être nettoyé, faute de quoi le
+# schéma produit serait rejeté à la compilation.
+RE_NCNAME = re.compile(r"^[A-Za-z_][A-Za-z0-9._-]*$")
+
+# Détection d'un schéma généré « à plat ». On n'accepte ici que le POINT comme
+# séparateur : c'est ce que produisent ces générateurs en remplaçant le « : »
+# interdit dans un nom XSD. Le tiret, lui, est légitime dans un nom composé
+# (« Order-Line ») et ne doit pas déclencher de fausse proposition.
+RE_FLAT_NAME = re.compile(r"^([A-Za-z][A-Za-z0-9]{0,4})\.+[A-Za-z0-9._-]+$")
+
+
+def sanitize_ncname(name: str) -> str:
+    """Rend un nom utilisable comme nom d'élément XSD."""
+    cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", name or "")
+    cleaned = cleaned.lstrip("._-0123456789")
+    return cleaned or "element"
 
 
 def qn(tag: str) -> str:
@@ -69,6 +89,8 @@ class Converter:
         self.root: Optional[Tuple[str, str]] = None
         self.conflicts: List[str] = []
         self.unknown_prefixes = set()
+        # noms nettoyés parce qu'inutilisables tels quels (nom d'origine → nom retenu)
+        self.renamed: Dict[str, str] = {}
 
     # ------------------------------------------------------------- lecture
 
@@ -87,6 +109,10 @@ class Converter:
             # nom sans préfixe : on le garde tel quel dans l'espace de noms principal
             parts = (next(iter(self.namespaces)) if self.namespaces else "ubl", raw)
         prefix, name = parts
+        if not RE_NCNAME.match(name):
+            propre = sanitize_ncname(name)
+            self.renamed.setdefault(name, propre)
+            name = propre
         if prefix not in self.namespaces:
             self.unknown_prefixes.add(prefix)
 
@@ -268,14 +294,14 @@ def looks_flat(data: bytes) -> Optional[Dict]:
         if not name:
             continue
         total += 1
-        parts = split_prefixed(name)
-        if parts:
-            counts[parts[0]] = counts.get(parts[0], 0) + 1
+        match = RE_FLAT_NAME.match(name)
+        if match:
+            counts[match.group(1)] = counts.get(match.group(1), 0) + 1
 
-    repetes = {p: n for p, n in counts.items() if n >= 2}
-    if len(repetes) < 2 or sum(repetes.values()) < max(3, total // 2):
+    prefixed = sum(counts.values())
+    if not counts or prefixed < 3 or prefixed * 2 < total:
         return None
-    return {"prefixes": sorted(repetes), "prefixed": sum(repetes.values()), "total": total}
+    return {"prefixes": sorted(counts), "prefixed": prefixed, "total": total}
 
 
 def namespaces_from_root(root) -> Dict[str, str]:
@@ -309,7 +335,35 @@ def convert(xsd_data: bytes, namespaces: Dict[str, str]):
         fichiers.append(("%s.xsd" % prefix,
                          etree.tostring(schema, pretty_print=True,
                                         xml_declaration=True, encoding="UTF-8")))
-    return fichiers, converter.root, converter.conflicts
+
+    notes = list(converter.conflicts)
+    if converter.renamed:
+        apercu = ", ".join("« %s » → « %s »" % (a, b)
+                           for a, b in list(converter.renamed.items())[:4])
+        notes.append("noms nettoyés car inutilisables en XSD : %s%s"
+                     % (apercu, " …" if len(converter.renamed) > 4 else ""))
+    return fichiers, converter.root, notes
+
+
+def compile_check(fichiers, main_name: str) -> Optional[str]:
+    """Compile le schéma produit pour ne jamais rendre un XSD cassé.
+
+    Renvoie None si tout va bien, sinon le message d'erreur.
+    """
+    import shutil
+    import tempfile
+    workdir = tempfile.mkdtemp(prefix="conv_check_")
+    try:
+        for name, data in fichiers:
+            with open(os.path.join(workdir, name), "wb") as handle:
+                handle.write(data)
+        try:
+            etree.XMLSchema(etree.parse(os.path.join(workdir, main_name)))
+        except (etree.XMLSchemaParseError, etree.XMLSyntaxError, OSError) as exc:
+            return str(exc)
+        return None
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
 
 
 def namespaces_from_xml(path: str) -> Dict[str, str]:
