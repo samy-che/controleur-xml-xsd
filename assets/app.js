@@ -6,7 +6,7 @@ const PYODIDE_VERSION = "314.0.4";
 const PYODIDE_MJS = `https://cdn.jsdelivr.net/npm/pyodide@${PYODIDE_VERSION}/pyodide.mjs`;
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const ENGINE_MODULES = ["__init__", "schema_model", "validator", "corrector",
-                        "service", "webapi"];
+                        "flat_schema", "service", "webapi"];
 
 const state = { xsd: [], xml: [], results: [], webapi: null };
 
@@ -182,7 +182,16 @@ function renderFiles() {
 
 /* ------------------------------------------------------------------ analyse */
 
-const nextFrame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+/* Rend la main au navigateur pour qu'il rafraîchisse l'affichage.
+   requestAnimationFrame seul ne suffit pas : il ne se déclenche pas quand
+   l'onglet est masqué, ce qui figerait l'analyse. On double donc d'un
+   minuteur, et le premier des deux qui répond débloque la suite. */
+const nextFrame = () => new Promise((resolve) => {
+  let done = false;
+  const finish = () => { if (!done) { done = true; resolve(); } };
+  requestAnimationFrame(finish);
+  setTimeout(finish, 50);
+});
 
 async function run() {
   const button = $("btn-run");
@@ -200,6 +209,16 @@ async function run() {
     const xsd = await Promise.all(state.xsd.map(async (file) => ({
       name: relName(file), content: await readAsBase64(file),
     })));
+
+    // Un XSD généré depuis un XML d'exemple a perdu ses espaces de noms : il ne
+    // validera jamais rien. On le détecte avant de lancer l'analyse et on
+    // propose la conversion, plutôt que de noyer l'utilisateur d'erreurs.
+    const flat = JSON.parse(webapi.inspect_xsd(JSON.stringify({ xsd })));
+    if (flat.flat) {
+      setProgress("", 0);
+      offerConversion(flat, xsd);
+      return;
+    }
 
     const opened = JSON.parse(webapi.open_session(JSON.stringify({
       xsd,
@@ -248,6 +267,97 @@ async function run() {
   } finally {
     button.disabled = false;
   }
+}
+
+/* ------------------------------------------------------------------ schéma « à plat » */
+
+function offerConversion(info, xsdPayload) {
+  const box = el("div", "notice info convert");
+  box.appendChild(el("h3", null, "Ce schéma a été généré depuis un XML d'exemple"));
+
+  const p1 = el("p", null,
+    `« ${info.file} » ne déclare aucun targetNamespace, et ${info.prefixed} de ses ` +
+    `${info.total} balises portent un préfixe collé au nom (${info.prefixes.join(", ")}). ` +
+    "C'est la signature des générateurs en ligne, qui ne gèrent pas les espaces de noms : " +
+    "ils écrivent « cbc.ID » là où il faudrait « cbc:ID ».");
+  const p2 = el("p", null,
+    "Pour un validateur, ces deux écritures désignent des balises sans aucun rapport. " +
+    "Ce schéma ne peut donc valider aucun de vos XML — pas même celui dont il est issu. " +
+    "Je peux lui rendre ses espaces de noms sans toucher à l'ordre des balises que vous " +
+    "y avez défini.");
+  box.appendChild(p1);
+  box.appendChild(p2);
+
+  const actions = el("div", "card-actions");
+  const go = el("button", "btn primary small", "Convertir ce XSD et relancer l'analyse");
+  go.onclick = () => runConversion(info, xsdPayload, box, go);
+  actions.appendChild(go);
+  box.appendChild(actions);
+
+  $("cards").appendChild(box);
+  $("results").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function runConversion(info, xsdPayload, box, button) {
+  button.disabled = true;
+  button.textContent = "Conversion…";
+  try {
+    const webapi = await engine();
+    const sample = await readAsBase64(state.xml[0]);
+    const result = JSON.parse(webapi.convert_flat(JSON.stringify({
+      xsd: xsdPayload, sampleXml: sample,
+    })));
+    if (!result.ok) {
+      box.appendChild(el("p", "convert-error", result.error));
+      button.disabled = false;
+      button.textContent = "Convertir ce XSD et relancer l'analyse";
+      return;
+    }
+
+    // les fichiers produits remplacent le XSD d'origine dans la zone de dépôt
+    state.xsd = result.files.map((f) => {
+      const file = new File([base64ToBytes(f.content)], f.name,
+                            { type: "application/xml" });
+      return file;
+    });
+    renderFiles();
+    $("select-main").value = result.mainXsd || "";
+
+    const done = el("div", "notice info");
+    done.appendChild(el("h3", null, "Schéma converti"));
+    done.appendChild(el("p", null,
+      `${result.files.length} fichiers produits (${result.files.map((f) => f.name).join(", ")}), ` +
+      `« ${result.mainXsd} » désigné comme schéma principal. ` +
+      "Ils ont remplacé votre XSD dans la zone de dépôt : téléchargez-les pour les réutiliser."));
+
+    if (result.conflicts.length) {
+      done.appendChild(el("p", null,
+        "Le générateur avait déclaré certains noms sous des formes différentes selon " +
+        "le contexte. En XSD un élément global n'a qu'une définition : voici les " +
+        "arbitrages retenus, à relire."));
+      const list = el("ul", "items");
+      result.conflicts.forEach((c) => list.appendChild(el("li", "left", c)));
+      done.appendChild(list);
+    }
+
+    const actions = el("div", "card-actions");
+    const dl = el("button", "btn ghost small", "Télécharger le schéma converti (ZIP)");
+    dl.onclick = () => saveConvertedZip(result.files);
+    actions.appendChild(dl);
+    done.appendChild(actions);
+    box.replaceWith(done);
+
+    await run();          // on relance l'analyse avec le schéma réparé
+  } catch (err) {
+    box.appendChild(el("p", "convert-error", "Échec de la conversion : " + err.message));
+    button.disabled = false;
+    button.textContent = "Convertir ce XSD et relancer l'analyse";
+  }
+}
+
+function saveConvertedZip(files) {
+  // archive « stored » minimale : évite d'embarquer une bibliothèque
+  files.forEach((f) => saveFile(f.name, base64ToBytes(f.content), "application/xml"));
 }
 
 function setProgress(text, percent) {

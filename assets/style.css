@@ -205,6 +205,11 @@ pre.xml {
   background: var(--bad-bg); color: var(--bad); border: 1px solid #f1c9c6;
 }
 .notice.info { background: var(--warn-bg); color: var(--warn); border-color: #ecd9ac; }
+.notice h3 { margin: 0 0 8px; font-size: 15px; }
+.notice p { margin: 0 0 10px; line-height: 1.5; }
+.notice .items { margin-top: 8px; }
+.notice .items li { background: rgba(255, 255, 255, 0.55); }
+.convert-error { color: var(--bad); font-weight: 600; }
 
 .hidden { display: none !important; }
 .foot { color: var(--muted); font-size: 12.5px; padding-bottom: 30px; }

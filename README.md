@@ -124,8 +124,14 @@ dont il est issu : pour un validateur, `cbc.UBLVersionID` est un nom contenant
 un point, sans rapport avec `UBLVersionID` dans l'espace de noms `cbc`. Ce
 n'est pas une limite de cet outil — `xmllint` refuse exactement pareil.
 
-Le convertisseur rétablit la sémantique perdue **sans toucher à l'ordre des
-balises** que vous avez défini :
+**L'application reconnaît ces schémas d'elle-même** et propose la conversion en
+un clic, avant même de lancer l'analyse : les fichiers produits remplacent le
+XSD d'origine dans la zone de dépôt et l'analyse repart aussitôt. Rien à
+installer, rien à taper.
+
+La même conversion existe en ligne de commande, pour les traitements par lots.
+Elle rétablit la sémantique perdue **sans toucher à l'ordre des balises** que
+vous avez défini :
 
 ```bash
 python3 convertir_xsd.py mon-schema.xsd --depuis-xml une-facture.xml --out schema-converti
@@ -242,10 +248,11 @@ xsdfix/              le moteur, chargé tel quel par le navigateur
   validator.py       validation lxml + messages d'erreur en français
   corrector.py       moteur de correction (ordre, namespace, ajouts, valeurs)
   service.py         Session (un XSD, N fichiers) + rapport + ZIP
+  flat_schema.py     remet les espaces de noms dans un XSD généré « à plat »
   webapi.py          frontière Python ↔ navigateur (JSON / base64)
 cli.py               même moteur, en ligne de commande
 diagnostic.py        extrait la structure XSD/XML sans divulguer de données
-convertir_xsd.py     remet les espaces de noms dans un XSD généré « à plat »
+convertir_xsd.py     idem en ligne de commande (le moteur est dans xsdfix/flat_schema.py)
 samples/             jeu d'exemple
 tests/               tests unitaires
 ```

@@ -17,7 +17,10 @@ import base64
 import json
 from typing import Dict, List, Optional
 
+from lxml import etree
+
 from .corrector import Options
+from .flat_schema import convert, looks_flat, namespaces_from_root
 from .service import AnalysisReport, InputFile, Session, build_zip
 
 _session: Optional[Session] = None
@@ -76,6 +79,66 @@ def zip_base64() -> str:
     if not _report.results:
         return ""
     return base64.b64encode(build_zip(_report)).decode("ascii")
+
+
+def inspect_xsd(payload_json: str) -> str:
+    """Signale un XSD généré « à plat », avant même de tenter une validation."""
+    payload = json.loads(payload_json)
+    for entry in payload.get("xsd") or []:
+        info = looks_flat(base64.b64decode(entry.get("content", "")))
+        if info is not None:
+            return json.dumps({"flat": True, "file": entry.get("name"),
+                               "prefixes": info["prefixes"],
+                               "prefixed": info["prefixed"],
+                               "total": info["total"]}, ensure_ascii=False)
+    return json.dumps({"flat": False})
+
+
+def convert_flat(payload_json: str) -> str:
+    """Convertit un XSD à plat, en apprenant les espaces de noms du XML fourni.
+
+    Renvoie les fichiers produits (base64) et la liste des arbitrages, ou une
+    erreur explicite si les espaces de noms restent introuvables.
+    """
+    payload = json.loads(payload_json)
+    entries = payload.get("xsd") or []
+    target = None
+    for entry in entries:
+        data = base64.b64decode(entry.get("content", ""))
+        if looks_flat(data) is not None:
+            target = (entry.get("name"), data)
+            break
+    if target is None:
+        return json.dumps({"ok": False, "error": "Aucun schéma « à plat » à convertir."})
+
+    sample = payload.get("sampleXml")
+    if not sample:
+        return json.dumps({"ok": False,
+                           "error": "Un XML est nécessaire pour retrouver les espaces de noms."})
+    try:
+        root = etree.fromstring(base64.b64decode(sample))
+    except etree.XMLSyntaxError as exc:
+        return json.dumps({"ok": False, "error": "XML illisible : %s" % exc})
+
+    namespaces = namespaces_from_root(root)
+    if not namespaces:
+        return json.dumps({"ok": False, "error":
+                           "Ce XML ne déclare aucun espace de noms : il n'y a rien à rétablir."})
+
+    fichiers, racine, conflits = convert(target[1], namespaces)
+    if not fichiers:
+        return json.dumps({"ok": False, "error":
+                           "Conversion impossible : aucun préfixe du XSD ne correspond "
+                           "aux espaces de noms du XML."})
+    return json.dumps({
+        "ok": True,
+        "source": target[0],
+        "mainXsd": "%s.xsd" % racine[0] if racine else None,
+        "conflicts": conflits,
+        "files": [{"name": name,
+                   "content": base64.b64encode(data).decode("ascii")}
+                  for name, data in fichiers],
+    }, ensure_ascii=False)
 
 
 def close_session() -> None:

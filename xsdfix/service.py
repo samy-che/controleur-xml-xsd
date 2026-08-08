@@ -327,8 +327,15 @@ class Session:
         if changes:
             result.corrected = corrected
             result.corrected_name = _corrected_name(item.name)
+        else:
+            # rien n'a bougé : « à traiter manuellement » répéterait mot pour mot
+            # la liste des erreurs détectées
+            result.errors_after = []
 
-        if any(e.category == CAT_ROOT for e in result.errors_before) and result.errors_after:
+        racine_rejetee = any(e.category == CAT_ROOT for e in result.errors_before)
+        racine_reparee = racine_rejetee and not any(
+            e.category == CAT_ROOT for e in result.errors_after)
+        if racine_reparee and result.errors_after:
             result.note = (
                 "L'élément racine était rejeté : le validateur s'arrête là et ne peut "
                 "pas examiner le contenu du fichier. Les erreurs ci-dessous n'ont pu "
