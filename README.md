@@ -130,9 +130,15 @@ Principe de prudence : **aucune donnée métier n'est inventée**. Un montant, u
 date ou un numéro manquant ne sera jamais rempli automatiquement — l'outil
 signale le problème et laisse trancher.
 
-Autre garde-fou : si les corrections ne réduisent pas le nombre d'erreurs,
-aucun fichier corrigé n'est proposé. Mieux vaut rendre la main que livrer un
-XML douteux.
+Autre garde-fou : les corrections destructrices sont bridées. Un espace de noms
+n'est retiré que si le document n'en utilise qu'un seul — sur un fichier
+multi-espaces (UBL, Factur-X), l'outil refuse d'y toucher et signale que le
+schéma ne correspond pas, plutôt que de mutiler le fichier pour le faire entrer
+au forceps dans le XSD.
+
+Le rapport ne juge jamais une correction au nombre d'erreurs restantes : quand
+la racine est rejetée, le validateur s'arrête là, et la corriger fait
+légitimement apparaître toutes les erreurs qu'elle masquait.
 
 ## Ce que l'application ne corrige pas
 
