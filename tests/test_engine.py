@@ -376,6 +376,57 @@ class TestDiagnostic(unittest.TestCase):
         self.assertEqual(result.changes, [])
 
 
+class TestNamespacePrudence(unittest.TestCase):
+    """Retirer un espace de noms est destructeur : à n'oser qu'à coup sûr."""
+
+    # XSD sans targetNamespace, face à un XML multi-espaces (cas type UBL)
+    XSD_SANS_NS = ('<?xml version="1.0"?>'
+                   '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">'
+                   '<xs:element name="Invoice"><xs:complexType><xs:sequence>'
+                   '<xs:element name="ID" type="xs:string"/>'
+                   '</xs:sequence></xs:complexType></xs:element></xs:schema>')
+
+    XML_UBL = ('<Invoice xmlns="urn:ubl:Invoice-2" xmlns:cbc="urn:ubl:cbc">'
+               '<cbc:UBLVersionID>2.1</cbc:UBLVersionID>'
+               '<cbc:ID>F1</cbc:ID></Invoice>')
+
+    def test_pas_de_suppression_sur_document_multi_espaces(self):
+        result = run(self.XSD_SANS_NS, self.XML_UBL)
+        self.assertEqual(result.status, STATUS_FAILED)
+        self.assertEqual(result.changes, [], "aucun espace de noms ne doit être retiré")
+        self.assertIsNone(result.corrected)
+
+    def test_le_message_explique_l_incompatibilite(self):
+        result = run(self.XSD_SANS_NS, self.XML_UBL)
+        message = result.errors_before[0].label
+        self.assertIn("aucun targetNamespace", message)
+        self.assertIn("urn:ubl:Invoice-2", message)
+
+    def test_suppression_permise_si_un_seul_espace_de_noms(self):
+        """Un document mono-espace face à un XSD sans targetNamespace : là,
+        retirer l'espace de noms est le seul geste raisonnable."""
+        xml = '<Invoice xmlns="urn:ubl:Invoice-2"><ID>F1</ID></Invoice>'
+        result = run(self.XSD_SANS_NS, xml)
+        self.assertEqual(result.status, STATUS_FIXED)
+        self.assertNotIn(b"urn:ubl", result.corrected)
+
+    def test_balise_connue_mais_mal_qualifiee(self):
+        """Un nom déclaré dans le XSD mais utilisé dans un autre espace de noms
+        n'est pas une « balise inconnue »."""
+        xsd = HEAD + '''
+          <xs:element name="R"><xs:complexType><xs:sequence>
+            <xs:element name="A" type="xs:string"/>
+            <xs:element name="B" type="xs:string"/>
+          </xs:sequence></xs:complexType></xs:element>
+        </xs:schema>'''
+        xml = ('<R xmlns="urn:t" xmlns:autre="urn:autre">'
+               '<autre:A>1</autre:A><B>2</B></R>')
+        result = run(xsd, xml)
+        messages = " ".join(e.label for e in result.errors_before + result.errors_after)
+        self.assertIn("autre espace de noms", messages)
+        self.assertNotIn("n'est déclaré nulle part", messages)
+
+
 class TestSchemaMultiFichiers(unittest.TestCase):
 
     def test_import_multi_namespaces_prefixes_conserves(self):

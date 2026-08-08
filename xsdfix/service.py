@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Tuple
 
 from lxml import etree
 
-from .corrector import Change, Options, correct
+from .corrector import Change, Options, correct, document_namespaces
 from .schema_model import SchemaSet, split_tag
 from .validator import CAT_ORDER, CAT_ROOT, CAT_UNEXPECTED, ValidationError, Validator
 
@@ -95,12 +95,40 @@ def _describe_roots(schema: SchemaSet) -> str:
     return "Ce XSD accepte comme racine : " + " ; ".join(shown) + suite + "."
 
 
+def _namespace_mismatch_hint(schema: SchemaSet, doc_namespaces) -> str:
+    """Explique le cas frequent « XSD sans targetNamespace / XML qualifie »."""
+    used = sorted(ns for ns in doc_namespaces if ns)
+    schema_ns = {ns for ns, _ in schema.global_elements if ns}
+    if used and not schema_ns:
+        return (" Votre XSD ne déclare aucun targetNamespace : il décrit des balises "
+                "sans espace de noms. Votre fichier, lui, en utilise %d (%s). Les deux "
+                "sont incompatibles : il vous faut le XSD correspondant à ces espaces "
+                "de noms, et non celui-ci." % (len(used), ", ".join(used[:3])))
+    return ""
+
+
 def _refine(errors: List[ValidationError], schema: SchemaSet,
-            root_qname=None) -> List[ValidationError]:
+            root_qname=None, doc_namespaces=None) -> List[ValidationError]:
     """Affine les messages bruts de lxml avec ce que l'on sait du schema."""
     for error in errors:
         if error.category == CAT_ORDER and error.element:
-            if error.element not in schema.declared_names:
+            qname = (error.element_ns, error.element)
+            if qname in schema.declared_qnames:
+                continue                      # connue et bien qualifiée : c'est un ordre
+            if error.element in schema.declared_names:
+                # le nom existe, mais pas dans cet espace de noms : ce n'est pas
+                # une balise inconnue, c'est un espace de noms qui ne colle pas
+                autres = sorted({ns for ns, local in schema.declared_qnames
+                                 if local == error.element and ns})
+                error.category = CAT_UNEXPECTED
+                error.label = (
+                    "<%s> est bien déclaré dans le XSD, mais dans un autre espace de "
+                    "noms%s. Votre fichier l'utilise %s." % (
+                        error.element,
+                        " (%s)" % ", ".join(autres[:2]) if autres else " (sans espace de noms)",
+                        "dans « %s »" % error.element_ns if error.element_ns
+                        else "sans espace de noms"))
+            else:
                 error.category = CAT_UNEXPECTED
                 error.label = ("<%s> n'est déclaré nulle part dans le XSD : balise inconnue."
                                % error.element)
@@ -109,8 +137,9 @@ def _refine(errors: List[ValidationError], schema: SchemaSet,
             trouve = ("dans l'espace de noms « %s »" % ns if ns
                       else "sans espace de noms")
             error.label = ("Le XSD n'accepte pas <%s> comme élément racine. "
-                           "Votre fichier commence par <%s> %s. %s" %
-                           (local, local, trouve, _describe_roots(schema)))
+                           "Votre fichier commence par <%s> %s. %s%s" %
+                           (local, local, trouve, _describe_roots(schema),
+                            _namespace_mismatch_hint(schema, doc_namespaces or set())))
     return errors
 
 
@@ -259,7 +288,9 @@ class Session:
 
         result.encoding = tree.docinfo.encoding or "UTF-8"
         root_qname = split_tag(tree.getroot().tag)
-        result.errors_before = _refine(self.validator.validate(tree), self.schema, root_qname)
+        namespaces = document_namespaces(tree.getroot())
+        result.errors_before = _refine(self.validator.validate(tree), self.schema,
+                                       root_qname, namespaces)
         if not result.errors_before:
             result.status = STATUS_VALID
             return result
@@ -275,7 +306,8 @@ class Session:
         try:
             new_tree = etree.fromstring(corrected, self._parser).getroottree()
             result.errors_after = _refine(self.validator.validate(new_tree), self.schema,
-                                          split_tag(new_tree.getroot().tag))
+                                          split_tag(new_tree.getroot().tag),
+                                          document_namespaces(new_tree.getroot()))
         except etree.XMLSyntaxError as exc:
             result.status = STATUS_FAILED
             result.fatal = "Le fichier corrigé n'est pas relisible : %s" % exc

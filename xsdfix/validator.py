@@ -29,7 +29,8 @@ class ValidationError:
     message: str            # message brut lxml
     label: str              # message reformule en francais
     category: str
-    element: Optional[str] = None   # nom de l'element concerne
+    element: Optional[str] = None       # nom local de l'element concerne
+    element_ns: Optional[str] = None    # son espace de noms, s'il en a un
     expected: List[str] = field(default_factory=list)
 
     def as_dict(self) -> Dict:
@@ -87,11 +88,17 @@ def _facet_label(where: str, facet: str, value: str, rest: str) -> str:
         value, where, detail, " (%s)" % constraint if constraint else "")
 
 
+def _split(qname: str):
+    """'{urn:ns}Facture' -> ('urn:ns', 'Facture') ; 'Facture' -> (None, 'Facture')."""
+    if qname.startswith("{"):
+        namespace, local = qname[1:].split("}", 1)
+        return (namespace, local)
+    return (None, qname)
+
+
 def _short(qname: str) -> str:
     """'{urn:ns}Facture' -> 'Facture' (on garde le nom lisible)."""
-    if qname.startswith("{"):
-        return qname.split("}", 1)[1]
-    return qname
+    return _split(qname)[1]
 
 
 def _expected_list(raw: str) -> List[str]:
@@ -101,11 +108,12 @@ def _expected_list(raw: str) -> List[str]:
 def humanize(message: str) -> Dict:
     """Traduit un message lxml en (categorie, libelle francais, element, attendus)."""
     element = None
+    element_ns = None
     attribute = None
     body = message
     match = _RE_ELEMENT.match(message.strip())
     if match:
-        element = _short(match.group(1))
+        element_ns, element = _split(match.group(1))
         attribute = match.group(2)
         body = match.group(3)
 
@@ -125,14 +133,14 @@ def humanize(message: str) -> Dict:
             label = "Attribut obligatoire « %s » manquant sur %s." % (attribute, where)
         else:
             label = "Problème sur l'attribut « %s » de %s : %s" % (attribute, where, body)
-        return {"category": CAT_ATTRIBUTE, "label": label, "element": element, "expected": expected}
+        return {"category": CAT_ATTRIBUTE, "label": label, "element": element, "element_ns": element_ns, "expected": expected}
 
     if "No matching global declaration available for the validation root" in body:
         return {
             "category": CAT_ROOT,
             "label": "L'élément racine %s n'existe pas dans le XSD (souvent un problème "
                      "d'espace de noms)." % where,
-            "element": element,
+            "element": element, "element_ns": element_ns,
             "expected": expected,
         }
 
@@ -147,21 +155,21 @@ def humanize(message: str) -> Dict:
         return {
             "category": CAT_ORDER if expected else CAT_UNEXPECTED,
             "label": label,
-            "element": element,
+            "element": element, "element_ns": element_ns,
             "expected": expected,
         }
 
     if "Missing child element" in body:
         label = "Il manque un ou plusieurs éléments obligatoires dans %s%s" % (
             where, (" : " + ", ".join(expected) + ".") if expected else ".")
-        return {"category": CAT_MISSING, "label": label, "element": element, "expected": expected}
+        return {"category": CAT_MISSING, "label": label, "element": element, "element_ns": element_ns, "expected": expected}
 
     facet = _RE_FACET.search(body)
     if facet:
         return {
             "category": CAT_VALUE,
             "label": _facet_label(where, facet.group(1), facet.group(2), facet.group(3)),
-            "element": element,
+            "element": element, "element_ns": element_ns,
             "expected": expected,
         }
 
@@ -171,7 +179,7 @@ def humanize(message: str) -> Dict:
             "category": CAT_VALUE,
             "label": "Valeur « %s » de %s non conforme au type %s." % (
                 atomic.group(1), where, atomic.group(2)),
-            "element": element,
+            "element": element, "element_ns": element_ns,
             "expected": expected,
         }
 
@@ -179,7 +187,7 @@ def humanize(message: str) -> Dict:
         return {
             "category": CAT_VALUE,
             "label": "%s ne doit pas contenir de texte." % where,
-            "element": element,
+            "element": element, "element_ns": element_ns,
             "expected": expected,
         }
 
@@ -187,11 +195,11 @@ def humanize(message: str) -> Dict:
         return {
             "category": CAT_UNEXPECTED,
             "label": "%s n'est pas déclaré dans le XSD." % where,
-            "element": element,
+            "element": element, "element_ns": element_ns,
             "expected": expected,
         }
 
-    return {"category": CAT_OTHER, "label": "%s : %s" % (where, body), "element": element,
+    return {"category": CAT_OTHER, "label": "%s : %s" % (where, body), "element": element, "element_ns": element_ns,
             "expected": expected}
 
 
@@ -227,6 +235,7 @@ class Validator:
                     label=info["label"],
                     category=info["category"],
                     element=info["element"],
+                    element_ns=info.get("element_ns"),
                     expected=info["expected"],
                 )
             )

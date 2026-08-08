@@ -89,6 +89,26 @@ dans le rapport — c'est presque toujours la cause d'un « XSD invalide ».
 Quand plusieurs XSD sont déposés, un menu permet de désigner le schéma
 principal ; par défaut c'est celui qu'aucun autre n'importe.
 
+### Diagnostiquer sans divulguer ses fichiers
+
+Si un XSD refuse vos XML sans que la raison soit claire, et que les fichiers
+sont confidentiels :
+
+```bash
+python3 diagnostic.py --xsd schema.xsd facture.xml
+```
+
+Le script n'extrait que la **structure** — espaces de noms, noms des éléments
+globaux, arborescence sur deux niveaux — et confronte les deux. Il ne lit
+jamais le texte des éléments ni les valeurs d'attributs : aucun montant, aucun
+nom de société, aucune adresse ne peut en sortir. L'option `--noms-masques`
+remplace en plus les noms de balises par des codes stables.
+
+La cause la plus fréquente d'un rejet de la racine : un XSD **sans
+`targetNamespace`** confronté à un XML qui, lui, utilise des espaces de noms.
+Les deux décrivent alors des mondes différents, et aucune correction
+automatique ne peut les réconcilier — il faut le schéma correspondant.
+
 ### Premier chargement
 
 Le navigateur télécharge ≈ 8 Mo (Python + lxml en WebAssembly) à la première
@@ -184,6 +204,7 @@ xsdfix/              le moteur, chargé tel quel par le navigateur
   service.py         Session (un XSD, N fichiers) + rapport + ZIP
   webapi.py          frontière Python ↔ navigateur (JSON / base64)
 cli.py               même moteur, en ligne de commande
+diagnostic.py        extrait la structure XSD/XML sans divulguer de données
 samples/             jeu d'exemple
 tests/               tests unitaires
 ```

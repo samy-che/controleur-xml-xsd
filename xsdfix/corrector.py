@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from lxml import etree
 
@@ -77,8 +77,20 @@ def _pretty_name(qname) -> str:
 
 # --------------------------------------------------------------------------- espace de noms
 
+def document_namespaces(root: etree._Element) -> Set[Optional[str]]:
+    """Espaces de noms réellement portés par les éléments du document."""
+    return {split_tag(el.tag)[0] for el in root.iter() if isinstance(el.tag, str)}
+
+
 def diagnose_namespace(root: etree._Element, schema: SchemaSet) -> Optional[Tuple[Optional[str], Optional[str]]]:
-    """Retourne (ns_actuel, ns_cible) si la racine doit changer d'espace de noms."""
+    """Retourne (ns_actuel, ns_cible) si la racine doit changer d'espace de noms.
+
+    Ajouter un espace de noms absent est sans risque. En retirer un est
+    destructeur : on ne le fait que si le document n'en utilise qu'un seul.
+    Un document multi-espaces (UBL, Factur-X…) confronté a un XSD sans
+    targetNamespace n'est pas un probleme de racine a « reparer » : c'est le
+    mauvais schema, et le dire vaut mieux que de mutiler le fichier.
+    """
     current_ns, local = split_tag(root.tag)
     if (current_ns, local) in schema.global_elements:
         return None
@@ -88,6 +100,10 @@ def diagnose_namespace(root: etree._Element, schema: SchemaSet) -> Optional[Tupl
     target_ns = candidates[0].qname[0]
     if target_ns == current_ns:
         return None
+    if target_ns is None and current_ns is not None:
+        used = {ns for ns in document_namespaces(root) if ns is not None}
+        if len(used) > 1:
+            return None
     return (current_ns, target_ns)
 
 

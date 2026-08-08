@@ -146,6 +146,9 @@ class SchemaSet:
         # noms locaux de tous les elements declares quelque part dans le XSD :
         # permet de distinguer « balise inconnue » de « balise mal placee »
         self.declared_names: Set[str] = set()
+        # les memes, qualifies : distingue « inconnue » de « connue mais dans un
+        # autre espace de noms », qui n'est pas du tout le meme diagnostic
+        self.declared_qnames: Set[QName] = set()
         self._model_cache: Dict[int, ContentModel] = {}
 
         self._load(self.main_path)
@@ -168,13 +171,23 @@ class SchemaSet:
             return
         self.docs[path] = root
 
+        tns_of_file = root.get("targetNamespace")
+        qualified = root.get("elementFormDefault", "unqualified") == "qualified"
         for decl_node in root.iter("{%s}element" % XSD_NS):
             name = decl_node.get("name")
             if name:
                 self.declared_names.add(name)
+                # un element global est toujours dans le targetNamespace ; un
+                # element local n'y est que si le schema est « qualified »
+                is_global = decl_node.getparent() is root
+                self.declared_qnames.add(
+                    (tns_of_file if (is_global or qualified) else None, name))
             ref = decl_node.get("ref")
             if ref:
                 self.declared_names.add(ref.split(":", 1)[-1])
+                resolved = resolve_qname(ref, decl_node)
+                if resolved is not None:
+                    self.declared_qnames.add(resolved)
 
         base_dir = os.path.dirname(path)
         for child in root:
