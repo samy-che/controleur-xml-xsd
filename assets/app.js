@@ -288,6 +288,22 @@ function offerConversion(info, xsdPayload) {
   box.appendChild(p1);
   box.appendChild(p2);
 
+  const relax = el("label", "opt");
+  const check = document.createElement("input");
+  check.type = "checkbox";
+  check.checked = true;
+  check.id = "opt-relax";
+  relax.appendChild(check);
+  const texte = el("span");
+  texte.appendChild(el("strong", null, "Assouplir les types (recommandé)"));
+  texte.appendChild(document.createTextNode(
+    "Le générateur a deviné les types depuis un seul exemple : un identifiant " +
+    "numérique dans ce fichier est devenu « xs:short », et toute facture dont " +
+    "l'identifiant contient une lettre serait rejetée à tort. Décochez si vous " +
+    "voulez aussi contrôler les types, et pas seulement l'ordre des balises."));
+  relax.appendChild(texte);
+  box.appendChild(relax);
+
   const actions = el("div", "card-actions");
   const go = el("button", "btn primary small", "Convertir ce XSD et relancer l'analyse");
   go.onclick = () => runConversion(info, xsdPayload, box, go);
@@ -304,8 +320,10 @@ async function runConversion(info, xsdPayload, box, button) {
   try {
     const webapi = await engine();
     const sample = await readAsBase64(state.xml[0]);
+    const relaxCheck = document.getElementById("opt-relax");
     const result = JSON.parse(webapi.convert_flat(JSON.stringify({
       xsd: xsdPayload, sampleXml: sample,
+      relaxTypes: relaxCheck ? relaxCheck.checked : true,
     })));
     if (!result.ok) {
       box.appendChild(el("p", "convert-error", result.error));
@@ -329,6 +347,12 @@ async function runConversion(info, xsdPayload, box, button) {
       `${result.files.length} fichiers produits (${result.files.map((f) => f.name).join(", ")}), ` +
       `« ${result.mainXsd} » désigné comme schéma principal. ` +
       "Ils ont remplacé votre XSD dans la zone de dépôt : téléchargez-les pour les réutiliser."));
+    if (result.relaxed) {
+      done.appendChild(el("p", null,
+        "Types assouplis : le contrôle porte sur la structure et l'ordre des balises, " +
+        "pas sur le format des valeurs. C'est le réglage adapté à un schéma déduit " +
+        "d'un seul exemple."));
+    }
 
     if (result.conflicts.length) {
       done.appendChild(el("p", null,

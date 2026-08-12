@@ -125,7 +125,8 @@ def convert_flat(payload_json: str) -> str:
         return json.dumps({"ok": False, "error":
                            "Ce XML ne déclare aucun espace de noms : il n'y a rien à rétablir."})
 
-    fichiers, racine, conflits = convert(target[1], namespaces)
+    relax = bool(payload.get("relaxTypes", True))
+    fichiers, racine, conflits = convert(target[1], namespaces, relax_types=relax)
     if not fichiers:
         return json.dumps({"ok": False, "error":
                            "Conversion impossible : aucun préfixe du XSD ne correspond "
@@ -143,6 +144,7 @@ def convert_flat(payload_json: str) -> str:
         "ok": True,
         "source": target[0],
         "mainXsd": main_name,
+        "relaxed": relax,
         "conflicts": conflits,
         "files": [{"name": name,
                    "content": base64.b64encode(data).decode("ascii")}

@@ -76,15 +76,23 @@ class Decl:
     simple_base: Optional[str] = None          # simpleContent/extension base
     children: List[Child] = field(default_factory=list)
     attributes: List[Tuple[str, str]] = field(default_factory=list)
+    mixed: bool = False                        # texte ET sous-elements admis
 
     @property
     def is_complex(self) -> bool:
         return bool(self.children) or self.simple_base is not None
 
+    @property
+    def content_type(self) -> Optional[str]:
+        """Type du contenu textuel, qu'il vienne de `type=` ou d'une extension."""
+        return self.type_name or self.simple_base
+
 
 class Converter:
-    def __init__(self, namespaces: Dict[str, str]):
+    def __init__(self, namespaces: Dict[str, str], relax_types: bool = False):
         self.namespaces = namespaces
+        # types issus d'un unique exemple : souvent trop etroits (cf _reconcile_type)
+        self.relax_types = relax_types
         self.registry: "OrderedDict[Tuple[str, str], List[Decl]]" = OrderedDict()
         self.root: Optional[Tuple[str, str]] = None
         self.conflicts: List[str] = []
@@ -156,45 +164,75 @@ class Converter:
         n'a qu'une définition : on les réconcilie."""
         merged: "OrderedDict[Tuple[str, str], Decl]" = OrderedDict()
         for key, decls in self.registry.items():
-            if len(decls) == 1:
-                merged[key] = decls[0]
-                continue
             label = "%s:%s" % key
-            if all(not d.is_complex for d in decls):
-                types = {d.type_name for d in decls}
-                if len(types) == 1:
-                    merged[key] = decls[0]
+            base = self._reconcile_type(decls, label)
+
+            has_children = any(d.children for d in decls)
+            has_text_only = any(not d.children for d in decls)
+
+            if not has_children:
+                if any(d.attributes or d.simple_base for d in decls):
+                    attributes = self._union_attributes(decls)
+                    merged[key] = Decl(simple_base=base or "xs:string",
+                                       attributes=attributes)
                 else:
-                    self.conflicts.append(
-                        "%s : types simples divergents (%s) → xs:string retenu"
-                        % (label, ", ".join(sorted(t or "?" for t in types))))
-                    merged[key] = Decl(type_name="xs:string")
+                    merged[key] = Decl(type_name=base or "xs:string")
                 continue
 
-            # au moins une forme complexe : on réunit les enfants dans l'ordre
-            # de première apparition, et tout devient facultatif car un enfant
+            # au moins une forme a des sous-éléments : on réunit les enfants dans
+            # l'ordre de première apparition, tous facultatifs puisqu'un enfant
             # peut n'exister que dans un contexte
             union: "OrderedDict[Tuple[str, str], Child]" = OrderedDict()
-            attributes: "OrderedDict[str, str]" = OrderedDict()
-            base = None
             for decl in decls:
-                base = base or decl.simple_base
-                for attribute, attr_type in decl.attributes:
-                    attributes.setdefault(attribute, attr_type)
                 for child in decl.children:
                     existing = union.get((child.prefix, child.local))
                     if existing is None:
                         union[(child.prefix, child.local)] = Child(
-                            child.prefix, child.local, "0", child.max_occurs)
+                            child.prefix, child.local,
+                            "0" if len(decls) > 1 else child.min_occurs,
+                            child.max_occurs)
                     elif child.max_occurs == "unbounded":
                         existing.max_occurs = "unbounded"
+
             if len(decls) > 1:
                 self.conflicts.append(
-                    "%s : %d définitions différentes fusionnées (enfants rendus facultatifs)"
+                    "%s : %d définitions différentes réunies (sous-balises rendues facultatives)"
                     % (label, len(decls)))
-            merged[key] = Decl(simple_base=base, children=list(union.values()),
-                               attributes=list(attributes.items()))
+            # certaines occurrences ne contenaient que du texte : le contenu
+            # mixte est le seul moyen d'accepter les deux formes
+            if has_text_only:
+                self.conflicts.append(
+                    "%s : tantôt du texte, tantôt des sous-balises → contenu mixte accepté"
+                    % label)
+            merged[key] = Decl(children=list(union.values()),
+                               attributes=self._union_attributes(decls),
+                               mixed=has_text_only)
         return merged
+
+    def _reconcile_type(self, decls: List[Decl], label: str) -> Optional[str]:
+        """Un élément global n'a qu'un type. Si les déclarations divergent, on
+        retient le plus permissif : mieux vaut ne pas contrôler une valeur que
+        rejeter à tort toutes celles d'un contexte."""
+        if self.relax_types:
+            # les types ont été devinés depuis UN exemple : un identifiant
+            # numérique dans cet exemple devient xs:short, et toute facture
+            # dont l'identifiant contient une lettre serait rejetée à tort
+            return "xs:string" if any(d.content_type for d in decls) else None
+        candidats = {d.content_type for d in decls if d.content_type}
+        if len(candidats) <= 1:
+            return next(iter(candidats), None)
+        self.conflicts.append(
+            "%s : types divergents selon le contexte (%s) → xs:string retenu"
+            % (label, ", ".join(sorted(candidats))))
+        return "xs:string"
+
+    def _union_attributes(self, decls: List[Decl]) -> List[Tuple[str, str]]:
+        attributes: "OrderedDict[str, str]" = OrderedDict()
+        for decl in decls:
+            for attribute, attr_type in decl.attributes:
+                attributes.setdefault(
+                    attribute, "xs:string" if self.relax_types else attr_type)
+        return list(attributes.items())
 
     # ------------------------------------------------------------- écriture
 
@@ -248,6 +286,8 @@ class Converter:
             return
 
         complex_type = etree.SubElement(node, qn("complexType"))
+        if decl.mixed:
+            complex_type.set("mixed", "true")
         if decl.simple_base is not None and not decl.children:
             content = etree.SubElement(complex_type, qn("simpleContent"))
             extension = etree.SubElement(content, qn("extension"))
@@ -309,13 +349,13 @@ def namespaces_from_root(root) -> Dict[str, str]:
     return {(prefix or "ubl"): uri for prefix, uri in root.nsmap.items()}
 
 
-def convert(xsd_data: bytes, namespaces: Dict[str, str]):
+def convert(xsd_data: bytes, namespaces: Dict[str, str], relax_types: bool = False):
     """Convertit en memoire. Renvoie (fichiers, racine, arbitrages).
 
     `fichiers` : liste de (nom, contenu octets), un par espace de noms.
     """
     root = etree.fromstring(xsd_data)
-    converter = Converter(namespaces)
+    converter = Converter(namespaces, relax_types=relax_types)
     for node in root:
         if isinstance(node.tag, str) and local(node) == "element" and node.get("name"):
             key = converter._read_element(node)

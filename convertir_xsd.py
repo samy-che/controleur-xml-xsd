@@ -44,6 +44,10 @@ def main() -> int:
     parser.add_argument("--depuis-xml", help="XML d'où lire les espaces de noms")
     parser.add_argument("--ns", action="append", default=[],
                         metavar="prefixe=uri", help="espace de noms explicite")
+    parser.add_argument("--types-stricts", action="store_true",
+                        help="conserve les types devinés par le générateur ; par défaut "
+                             "ils sont assouplis en xs:string, car déduits d'un seul "
+                             "exemple ils rejettent à tort les autres fichiers")
     args = parser.parse_args()
 
     with open(args.xsd, "rb") as handle:
@@ -66,7 +70,7 @@ def main() -> int:
         print("Indiquez les espaces de noms avec --depuis-xml ou --ns.", file=sys.stderr)
         return 2
 
-    converter = Converter(namespaces)
+    converter = Converter(namespaces, relax_types=not args.types_stricts)
     converter.read(args.xsd)
     merged = converter.merge()
 
@@ -78,6 +82,9 @@ def main() -> int:
     written = converter.write(merged, args.out)
 
     print("Éléments convertis : %d" % len(merged))
+    print("Types              : %s"
+          % ("conservés tels quels" if args.types_stricts
+             else "assouplis en xs:string (contrôle de structure et d'ordre)"))
     if converter.root:
         print("Racine             : <%s> dans %s"
               % (converter.root[1], namespaces.get(converter.root[0], "?")))

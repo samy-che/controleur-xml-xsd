@@ -142,12 +142,26 @@ Les espaces de noms sont appris depuis les déclarations `xmlns:` du XML fourni
 espace de noms, à déposer tous ensemble dans l'application, en désignant
 `ubl.xsd` comme schéma principal.
 
-Un point mérite votre attention dans le rapport de conversion : le générateur
-a pu déclarer un même nom avec des formes différentes selon le contexte
-(`cbc.ID` typé `xs:short` en tête de facture, mais texte dans
-`cac:OrderReference`). En XSD un élément global n'a qu'une seule définition :
-le convertisseur les réconcilie et **liste chaque arbitrage**. Relisez cette
-liste, c'est là que la conversion perd en précision.
+#### Les types devinés, et pourquoi ils sont assouplis
+
+Un générateur déduit les types d'**un seul exemple**. Si l'identifiant de la
+facture témoin était `380`, il écrit `type="xs:short"` — et toute facture dont
+l'identifiant contient une lettre (`FA-2026-0042`) sera rejetée, alors que rien
+ne cloche vraiment.
+
+La conversion **remplace donc les types par `xs:string` par défaut** : le
+contrôle porte sur la structure et l'ordre des balises, pas sur le format des
+valeurs. C'est le réglage adapté à un schéma déduit d'un exemple. Une case à
+cocher permet de conserver les types devinés (`--types-stricts` en ligne de
+commande) si vous voulez aussi contrôler les formats.
+
+Indépendamment de ce réglage, le générateur a pu déclarer un même nom sous des
+formes différentes selon le contexte (`cbc.ID` numérique en tête de facture,
+mais textuel dans `cac:OrderReference`). En XSD un élément global n'a qu'une
+seule définition : le convertisseur retient alors **le type le plus permissif**
+— rejeter à tort toutes les valeurs d'un contexte serait pire que ne pas les
+contrôler — et **liste chaque arbitrage**. Relisez cette liste, c'est là que la
+conversion perd en précision.
 
 ### Premier chargement
 

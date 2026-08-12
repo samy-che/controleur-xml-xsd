@@ -593,6 +593,80 @@ class TestConvertisseur(unittest.TestCase):
         self.assertIn(b'name="DespatchDocumentReference"', contenu)
         self.assertNotIn(b'name=".DespatchDocumentReference"', contenu)
 
+    # cbc.ID est numérique en tête de facture (le générateur l'a déduit d'un
+    # exemple où l'identifiant était un nombre) et textuel dans OrderReference
+    PLAT_TYPES_DIVERGENTS = (
+        '<?xml version="1.0"?>'
+        '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">'
+        '<xs:element name="ubl.Invoice"><xs:complexType><xs:sequence>'
+        '<xs:element name="cbc.ID"><xs:complexType><xs:simpleContent>'
+        '<xs:extension base="xs:short">'
+        '<xs:attribute name="schemeID" type="xs:string"/>'
+        '</xs:extension></xs:simpleContent></xs:complexType></xs:element>'
+        '<xs:element name="cac.OrderReference"><xs:complexType><xs:sequence>'
+        '<xs:element name="cbc.ID" type="xs:string"/>'
+        '</xs:sequence></xs:complexType></xs:element>'
+        '</xs:sequence></xs:complexType></xs:element></xs:schema>')
+
+    def test_type_le_plus_permissif_retenu(self):
+        """Un même nom typé xs:short ici et xs:string là ne doit pas hériter du
+        type numérique : toutes les valeurs textuelles seraient rejetées."""
+        from xsdfix.flat_schema import convert
+        fichiers, _, notes = convert(self.PLAT_TYPES_DIVERGENTS.encode(), dict(self.NS),
+                                     relax_types=False)
+        cbc = dict(fichiers)["cbc.xsd"]
+        self.assertIn(b'base="xs:string"', cbc)
+        self.assertNotIn(b'base="xs:short"', cbc)
+        self.assertTrue(any("types divergents" in n for n in notes), notes)
+
+    def test_valeur_textuelle_acceptee_apres_conversion(self):
+        """Le cas de bout en bout : un ID textuel ne doit plus être signalé."""
+        from xsdfix.flat_schema import convert
+        for relax in (False, True):
+            fichiers, _, _ = convert(self.PLAT_TYPES_DIVERGENTS.encode(), dict(self.NS),
+                                     relax_types=relax)
+            files = [InputFile(n, d) for n, d in fichiers]
+            xml = ('<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" '
+                   'xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:'
+                   'CommonBasicComponents-2" '
+                   'xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:'
+                   'CommonAggregateComponents-2">'
+                   '<cbc:ID>FA-2026-001</cbc:ID>'          # textuel, pas numérique
+                   '<cac:OrderReference><cbc:ID>PO-1</cbc:ID></cac:OrderReference>'
+                   '</Invoice>')
+            report = analyze(files, [InputFile("f.xml", xml.encode())],
+                             Options(), preferred_xsd="ubl.xsd")
+            result = report.results[0]
+            self.assertEqual(result.status, STATUS_VALID,
+                             "types assouplis=%s : %s" % (
+                                 relax, [e.label for e in result.errors_before]))
+
+    def test_types_assouplis_ignorent_les_formats_devines(self):
+        """Avec l'assouplissement, une date fantaisiste ne fait plus échouer un
+        fichier dont le seul vrai défaut serait l'ordre des balises."""
+        from xsdfix.flat_schema import convert
+        plat = ('<?xml version="1.0"?>'
+                '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">'
+                '<xs:element name="ubl.Invoice"><xs:complexType><xs:sequence>'
+                '<xs:element name="cbc.IssueDate" type="xs:date"/>'
+                '<xs:element name="cbc.ID" type="xs:short"/>'
+                '</xs:sequence></xs:complexType></xs:element></xs:schema>')
+        xml = ('<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" '
+               'xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:'
+               'CommonBasicComponents-2">'
+               '<cbc:ID>FA-001</cbc:ID>'                  # textuel
+               '<cbc:IssueDate>31/07/2026</cbc:IssueDate>'  # format non ISO
+               '</Invoice>')
+
+        fichiers, _, _ = convert(plat.encode(), dict(self.NS), relax_types=True)
+        report = analyze([InputFile(n, d) for n, d in fichiers],
+                         [InputFile("f.xml", xml.encode())], Options(),
+                         preferred_xsd="ubl.xsd")
+        result = report.results[0]
+        self.assertEqual(result.status, STATUS_FIXED)      # seul l'ordre est corrigé
+        self.assertEqual(order_of(result), ["IssueDate", "ID"])
+        self.assertEqual(len(result.errors_after), 0)
+
     def test_ordre_detecte_et_corrige_apres_conversion(self):
         _, files = self._convertir()
         report = analyze(files, [InputFile("f.xml", self.XML_DESORDRE.encode())],
