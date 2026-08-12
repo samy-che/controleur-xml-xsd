@@ -185,12 +185,26 @@ fini de déposer ses fichiers. La pastille en haut de page indique son état.
 | **Ordre des balises** | activée | Remet les éléments dans l'ordre du `xs:sequence`, à tous les niveaux d'imbrication. |
 | **Espace de noms** | activée | Ajoute le `xmlns` manquant sur la racine (ou le retire s'il est en trop), en respectant `elementFormDefault`. |
 | **Nettoyage des valeurs** | activée | Retire les espaces parasites autour d'une valeur qui fait échouer un format (code pays, date…). N'agit que sur les valeurs effectivement en erreur. |
-| **Ajout des éléments obligatoires manquants** | désactivée | Insère les balises requises **vides**, à la bonne position. Le fichier reste donc souvent « partiel » : à compléter à la main. |
+| **Ajout des éléments obligatoires manquants** | désactivée | Insère les balises requises **vides**, à la bonne position, chacune précédée d'un commentaire signalant l'ajout. Le fichier reste donc souvent « partiel » : à compléter à la main. |
 | **Suppression des balises inconnues** | désactivée | Retire les éléments absents du XSD. **Perte de données** : à activer en connaissance de cause. |
 
 Principe de prudence : **aucune donnée métier n'est inventée**. Un montant, une
 date ou un numéro manquant ne sera jamais rempli automatiquement — l'outil
 signale le problème et laisse trancher.
+
+Une balise ajoutée est donc vide, et se signale dans le fichier :
+
+```xml
+<PaymentMeans>
+  <!-- AJOUTÉ PAR LE CONTRÔLEUR XML/XSD : balise obligatoire absente du fichier
+       d'origine. À vérifier et à compléter avant envoi. -->
+  <PaymentMeansCode/>
+  <PaymentID>P1</PaymentID>
+</PaymentMeans>
+```
+
+Le commentaire reste accolé à sa balise même si un réordonnancement intervient
+ensuite. `--sans-commentaires` en ligne de commande pour s'en passer.
 
 Autre garde-fou : les corrections destructrices sont bridées. Un espace de noms
 n'est retiré que si le document n'en utilise qu'un seul — sur un fichier

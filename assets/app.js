@@ -55,9 +55,12 @@ async function bootEngine() {
 
   setEngineStatus("Chargement du moteur de correction…");
   pyodide.FS.mkdirTree("/engine/xsdfix");
+  // « no-cache » force la revalidation auprès du serveur : sans cela, un
+  // visiteur déjà venu continuerait d'exécuter l'ancien moteur après une mise
+  // en ligne. Les fichiers sont petits et renvoient un 304 quand rien n'a changé.
   const sources = await Promise.all(
     ENGINE_MODULES.map(async (name) => {
-      const response = await fetch(`xsdfix/${name}.py`);
+      const response = await fetch(`xsdfix/${name}.py`, { cache: "no-cache" });
       if (!response.ok) throw new Error(`xsdfix/${name}.py introuvable`);
       return [name, await response.text()];
     })

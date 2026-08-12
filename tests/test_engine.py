@@ -269,6 +269,50 @@ class TestOptions(unittest.TestCase):
         self.assertEqual(with_insert.status, STATUS_FIXED)
         self.assertEqual(order_of(with_insert), ["A", "B"])
 
+    def test_balise_ajoutee_signalee_par_un_commentaire(self):
+        """Une balise insérée vide doit se repérer dans le fichier : sans
+        commentaire, elle passerait inaperçue à la relecture."""
+        from xsdfix.corrector import INSERTED_COMMENT
+        xml = '<R xmlns="urn:t"><B>2</B></R>'
+        result = run(self.XSD, xml, Options(insert_missing=True))
+        self.assertEqual(result.status, STATUS_FIXED)
+        texte = result.corrected.decode()
+        self.assertIn(INSERTED_COMMENT.strip(), texte)
+        # le commentaire précède la balise qu'il annonce
+        self.assertLess(texte.index("AJOUTÉ PAR LE"), texte.index("<A/>"))
+
+    def test_commentaire_desactivable(self):
+        xml = '<R xmlns="urn:t"><B>2</B></R>'
+        result = run(self.XSD, xml, Options(insert_missing=True, comment_inserted=False))
+        self.assertEqual(result.status, STATUS_FIXED)
+        self.assertNotIn(b"AJOUT", result.corrected)
+
+    def test_commentaire_suit_sa_balise_au_reordonnancement(self):
+        """Le commentaire est rattaché à l'élément qui le suit : un tri
+        ultérieur ne doit pas les séparer."""
+        from lxml import etree
+        xsd = HEAD + '''
+          <xs:element name="R"><xs:complexType><xs:sequence>
+            <xs:element name="A" type="xs:string"/>
+            <xs:element name="B" type="xs:string"/>
+            <xs:element name="C" type="xs:string"/>
+          </xs:sequence></xs:complexType></xs:element>
+        </xs:schema>'''
+        # B manquant, et C avant A : insertion et réordonnancement dans la foulée
+        premier = run(xsd, '<R xmlns="urn:t"><C>3</C><A>1</A></R>',
+                      Options(insert_missing=True))
+        self.assertEqual(premier.status, STATUS_FIXED)
+        # on repasse le fichier corrigé dans l'outil : rien ne doit bouger
+        second = run(xsd, premier.corrected.decode(), Options(insert_missing=True))
+        self.assertEqual(second.status, STATUS_VALID)
+
+        root = etree.fromstring(premier.corrected)
+        noeuds = list(root)
+        commentaire = [i for i, n in enumerate(noeuds) if not isinstance(n.tag, str)]
+        self.assertTrue(commentaire, "le commentaire doit être présent")
+        suivant = noeuds[commentaire[0] + 1]
+        self.assertEqual(etree.QName(suivant).localname, "B")
+
     def test_suppression_balise_inconnue(self):
         xml = '<R xmlns="urn:t"><A>1</A><Inconnu>x</Inconnu></R>'
         base = run(self.XSD, xml)

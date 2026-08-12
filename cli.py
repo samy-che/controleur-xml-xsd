@@ -59,7 +59,10 @@ def main() -> int:
     parser.add_argument("--sans-reordonner", action="store_true")
     parser.add_argument("--sans-namespace", action="store_true")
     parser.add_argument("--ajouter-manquants", action="store_true",
-                        help="insère les éléments obligatoires absents (vides)")
+                        help="insère les éléments obligatoires absents (vides), chacun "
+                             "précédé d'un commentaire signalant l'ajout")
+    parser.add_argument("--sans-commentaires", action="store_true",
+                        help="n'accole pas de commentaire aux balises ajoutées")
     parser.add_argument("--supprimer-inconnus", action="store_true",
                         help="retire les éléments absents du XSD (perte de données)")
     parser.add_argument("--verbeux", "-v", action="store_true")
@@ -79,6 +82,7 @@ def main() -> int:
         fix_namespace=not args.sans_namespace,
         insert_missing=args.ajouter_manquants,
         remove_unknown=args.supprimer_inconnus,
+        comment_inserted=not args.sans_commentaires,
     )
     report = analyze(xsds, xmls, options)
     if report.schema_error:

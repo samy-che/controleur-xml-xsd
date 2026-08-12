@@ -31,6 +31,13 @@ from .validator import CAT_VALUE, Validator
 
 MAX_INSERT_DEPTH = 4
 
+# Commentaire accolé à chaque balise insérée par l'outil. Il doit rester
+# repérable d'un coup d'œil dans le fichier : ces balises sont vides et ne
+# valideront pas tant qu'une valeur n'y aura pas été portée.
+# (Aucun « -- » : la norme XML l'interdit à l'intérieur d'un commentaire.)
+INSERTED_COMMENT = (" AJOUTÉ PAR LE CONTRÔLEUR XML/XSD : balise obligatoire absente du "
+                    "fichier d'origine. À vérifier et à compléter avant envoi. ")
+
 
 @dataclass
 class Change:
@@ -49,12 +56,14 @@ class Options:
     trim_values: bool = True
     insert_missing: bool = False
     remove_unknown: bool = False
+    comment_inserted: bool = True      # signaler chaque balise ajoutee
 
     @classmethod
     def from_dict(cls, raw: Optional[Dict]) -> "Options":
         raw = raw or {}
         opts = cls()
-        for key in ("reorder", "fix_namespace", "trim_values", "insert_missing", "remove_unknown"):
+        for key in ("reorder", "fix_namespace", "trim_values", "insert_missing",
+                    "remove_unknown", "comment_inserted"):
             if key in raw:
                 setattr(opts, key, bool(raw[key]))
         return opts
@@ -274,7 +283,8 @@ def _indent_subtree(el: etree._Element, base: str, unit: str) -> None:
 
 
 def _insert_missing(el: etree._Element, model: ContentModel, schema: SchemaSet,
-                    path: str, depth: int, changes: List[Change]) -> None:
+                    path: str, depth: int, options: Options,
+                    changes: List[Change]) -> None:
     present = {split_tag(c.tag) for c in _element_children(el)}
     if model.simple_content or model.unconstrained:
         return
@@ -292,24 +302,33 @@ def _insert_missing(el: etree._Element, model: ContentModel, schema: SchemaSet,
 
         unit = "  "
         lead = el.text if position == 0 else nodes[position - 1].tail
-        el.insert(position, new_el)
+        # indentation des freres : en fin de liste, `lead` est l'indentation de
+        # fermeture du parent, plus courte que celle des enfants
         if position == len(nodes) and position >= 1:
-            # insere en dernier : il recupere l'indentation de fermeture du parent,
-            # et son predecesseur reprend l'indentation courante des freres
-            new_el.tail = lead
-            new_el.getprevious().tail = nodes[position - 2].tail if position >= 2 else el.text
+            frere = nodes[position - 2].tail if position >= 2 else el.text
+            nodes[position - 1].tail = frere
+            fermeture = lead
         else:
-            new_el.tail = lead
+            frere = lead
+            fermeture = lead
+
+        el.insert(position, new_el)
+        if options.comment_inserted:
+            # le commentaire precede la balise : c'est la position lisible, et
+            # le reordonnancement rattache un commentaire a l'element qui le suit
+            comment = etree.Comment(INSERTED_COMMENT)
+            new_el.addprevious(comment)
+            comment.tail = frere
+        new_el.tail = fermeture
 
         if len(new_el):
-            previous = new_el.getprevious()
-            source = el.text if previous is None else previous.tail
-            _indent_subtree(new_el, (source or "\n").rsplit("\n", 1)[-1], unit)
+            _indent_subtree(new_el, (frere or "\n").rsplit("\n", 1)[-1], unit)
 
         present.add(slot.qname)
-        changes.append(Change(
-            "insert", path,
-            "élément obligatoire <%s> ajouté (vide, à compléter)" % _pretty_name(slot.qname)))
+        detail = "élément obligatoire <%s> ajouté (vide, à compléter)" % _pretty_name(slot.qname)
+        if options.comment_inserted:
+            detail += ", signalé par un commentaire dans le fichier"
+        changes.append(Change("insert", path, detail))
 
 
 def _walk(el: etree._Element, decl: Optional[ElementDecl], schema: SchemaSet,
@@ -323,7 +342,7 @@ def _walk(el: etree._Element, decl: Optional[ElementDecl], schema: SchemaSet,
     if options.reorder and model.orderable:
         _reorder_children(el, model, path, changes)
     if options.insert_missing and model.orderable:
-        _insert_missing(el, model, schema, path, depth, changes)
+        _insert_missing(el, model, schema, path, depth, options, changes)
 
     children = _element_children(el)
     counts: Dict[str, int] = {}
