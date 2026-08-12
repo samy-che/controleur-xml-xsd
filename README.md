@@ -67,6 +67,14 @@ Chaque fichier reçoit un statut :
 | **échec** | aucune correction automatique fiable n'était possible |
 | **illisible** | XML mal formé (balise non fermée, caractère interdit…) |
 
+Les erreurs sont classées par nature, ce qui n'est pas immédiat : le validateur
+emploie le **même message** pour « cette balise est mal placée » et pour « la
+balise obligatoire qui devait précéder est absente » — il signale l'élément sur
+lequel il bute, jamais celui qui manque. L'outil tranche en regardant si
+l'élément attendu figure ailleurs sous le même parent : présent, c'est un
+problème d'ordre, corrigé automatiquement ; absent, c'est une balise manquante,
+qui relève de l'option d'ajout ou d'une décision de votre part.
+
 Téléchargez chaque fichier corrigé individuellement, ou tous d'un coup en ZIP
 (l'archive contient aussi un `rapport.txt` récapitulatif).
 

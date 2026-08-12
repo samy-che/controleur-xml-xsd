@@ -376,6 +376,44 @@ class TestDiagnostic(unittest.TestCase):
         self.assertEqual(result.changes, [])
 
 
+class TestManquantContreOrdre(unittest.TestCase):
+    """lxml emploie le même message pour « balise mal placée » et « balise
+    obligatoire absente » : il signale l'élément sur lequel il bute, pas celui
+    qui manque. Les deux diagnostics n'appellent pourtant pas la même action."""
+
+    XSD = HEAD + '''
+      <xs:element name="Reglement"><xs:complexType><xs:sequence>
+        <xs:element name="Code" type="xs:string"/>
+        <xs:element name="Reference" type="xs:string" minOccurs="0"/>
+        <xs:element name="Compte" type="xs:string"/>
+      </xs:sequence></xs:complexType></xs:element>
+    </xs:schema>'''
+
+    def test_element_absent_classe_comme_manquant(self):
+        xml = '<Reglement xmlns="urn:t"><Reference>R1</Reference><Compte>FR76</Compte></Reglement>'
+        result = run(self.XSD, xml)
+        erreur = result.errors_before[0]
+        self.assertEqual(erreur.category, "manquant")
+        self.assertIn("<Code> manque", erreur.label)
+        self.assertIn("pas un problème d'ordre", erreur.label)
+        self.assertEqual(result.changes, [], "rien à réordonner ici")
+
+    def test_element_mal_place_reste_un_ordre(self):
+        xml = '<Reglement xmlns="urn:t"><Compte>FR76</Compte><Code>30</Code></Reglement>'
+        result = run(self.XSD, xml)
+        self.assertEqual(result.errors_before[0].category, "ordre")
+        self.assertEqual(result.status, STATUS_FIXED)
+        self.assertEqual(order_of(result), ["Code", "Compte"])
+
+    def test_l_option_conseillee_resout_le_manquant(self):
+        """Le message renvoie vers « Ajouter les éléments obligatoires
+        manquants » : encore faut-il que cette option règle le cas."""
+        xml = '<Reglement xmlns="urn:t"><Reference>R1</Reference><Compte>FR76</Compte></Reglement>'
+        result = run(self.XSD, xml, Options(insert_missing=True))
+        self.assertEqual(result.status, STATUS_FIXED)
+        self.assertEqual(order_of(result), ["Code", "Reference", "Compte"])
+
+
 class TestNamespacePrudence(unittest.TestCase):
     """Retirer un espace de noms est destructeur : à n'oser qu'à coup sûr."""
 

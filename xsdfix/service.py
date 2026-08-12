@@ -15,7 +15,8 @@ from lxml import etree
 
 from .corrector import Change, Options, correct, document_namespaces
 from .schema_model import SchemaSet, split_tag
-from .validator import CAT_ORDER, CAT_ROOT, CAT_UNEXPECTED, ValidationError, Validator
+from .validator import (CAT_MISSING, CAT_ORDER, CAT_ROOT, CAT_UNEXPECTED,
+                        ValidationError, Validator)
 
 STATUS_VALID = "valid"        # deja conforme
 STATUS_FIXED = "fixed"        # corrige et desormais conforme
@@ -107,14 +108,64 @@ def _namespace_mismatch_hint(schema: SchemaSet, doc_namespaces) -> str:
     return ""
 
 
+def _element_at(tree, line: int, name: str):
+    """Retrouve dans l'arbre l'élément visé par une erreur lxml."""
+    if tree is None or not line:
+        return None
+    for node in tree.getroot().iter():
+        if (isinstance(node.tag, str) and node.sourceline == line
+                and split_tag(node.tag)[1] == name):
+            return node
+    return None
+
+
+def _diagnose_missing(tree, error: ValidationError) -> Optional[str]:
+    """Distingue « mal placée » de « il en manque une avant ».
+
+    lxml emploie le meme message dans les deux cas : il signale l'element sur
+    lequel il bute, pas celui qui manque. La difference se lit dans la fratrie :
+    si un des elements attendus figure ailleurs sous le meme parent, c'est un
+    probleme d'ordre ; sinon il est tout simplement absent.
+    """
+    if not error.expected:
+        return None
+    node = _element_at(tree, error.line, error.element)
+    if node is None:
+        return None
+    parent = node.getparent()
+    if parent is None:
+        return None
+    freres = {split_tag(c.tag)[1] for c in parent if isinstance(c.tag, str)}
+    if freres & set(error.expected):
+        return None                      # l'attendu est là, ailleurs : c'est l'ordre
+
+    attendus = error.expected
+    if len(attendus) == 1:
+        quoi = "<%s> manque" % attendus[0]
+    else:
+        quoi = "il manque l'un de ces éléments : %s" % ", ".join(attendus)
+    ou = " dans <%s>" % split_tag(parent.tag)[1] if parent.getparent() is not None \
+        else ""
+    return ("%s%s, juste avant <%s>. Ce n'est pas un problème d'ordre : l'élément "
+            "attendu est absent du fichier. Activez « Ajouter les éléments "
+            "obligatoires manquants » pour l'insérer vide, à la bonne position."
+            % (quoi[0].upper() + quoi[1:], ou, error.element))
+
+
 def _refine(errors: List[ValidationError], schema: SchemaSet,
-            root_qname=None, doc_namespaces=None) -> List[ValidationError]:
+            root_qname=None, doc_namespaces=None, tree=None) -> List[ValidationError]:
     """Affine les messages bruts de lxml avec ce que l'on sait du schema."""
     for error in errors:
         if error.category == CAT_ORDER and error.element:
             qname = (error.element_ns, error.element)
             if qname in schema.declared_qnames:
-                continue                      # connue et bien qualifiée : c'est un ordre
+                # nom connu et bien qualifié : reste à savoir si la balise est
+                # mal placée, ou si celle qui devait la précéder manque
+                manquant = _diagnose_missing(tree, error)
+                if manquant:
+                    error.category = CAT_MISSING
+                    error.label = manquant
+                continue
             if error.element in schema.declared_names:
                 # le nom existe, mais pas dans cet espace de noms : ce n'est pas
                 # une balise inconnue, c'est un espace de noms qui ne colle pas
@@ -290,7 +341,7 @@ class Session:
         root_qname = split_tag(tree.getroot().tag)
         namespaces = document_namespaces(tree.getroot())
         result.errors_before = _refine(self.validator.validate(tree), self.schema,
-                                       root_qname, namespaces)
+                                       root_qname, namespaces, tree)
         if not result.errors_before:
             result.status = STATUS_VALID
             return result
@@ -307,7 +358,7 @@ class Session:
             new_tree = etree.fromstring(corrected, self._parser).getroottree()
             result.errors_after = _refine(self.validator.validate(new_tree), self.schema,
                                           split_tag(new_tree.getroot().tag),
-                                          document_namespaces(new_tree.getroot()))
+                                          document_namespaces(new_tree.getroot()), new_tree)
         except etree.XMLSyntaxError as exc:
             result.status = STATUS_FAILED
             result.fatal = "Le fichier corrigé n'est pas relisible : %s" % exc
