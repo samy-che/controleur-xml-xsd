@@ -346,7 +346,7 @@ class Session:
         if self.regles:
             # le referentiel porte sur les donnees, independamment du XSD :
             # un fichier parfaitement valide peut contenir un mauvais numero
-            result.ecarts = controler(tree.getroot(), self.regles)
+            result.ecarts = controler(tree.getroot(), self.regles, item.name)
         root_qname = split_tag(tree.getroot().tag)
         namespaces = document_namespaces(tree.getroot())
         result.errors_before = _refine(self.validator.validate(tree), self.schema,

@@ -84,17 +84,20 @@ def load_referentiel(payload_json: str) -> str:
 def template_base64(payload_json: str) -> str:
     """Modèle Excel pré-rempli à partir des XML fournis."""
     payload = json.loads(payload_json)
-    racines = []
+    documents = []
     for entry in payload.get("xml") or []:
         try:
-            racines.append(etree.fromstring(base64.b64decode(entry.get("content", ""))))
+            racine = etree.fromstring(base64.b64decode(entry.get("content", "")))
         except etree.XMLSyntaxError:
             continue
-    if not racines:
+        documents.append((str(entry.get("name", "")), racine))
+    if not documents:
         return json.dumps({"ok": False,
                            "error": "Aucun XML lisible pour construire le modèle."})
-    data = generer_modele(racines)
-    return json.dumps({"ok": True, "rows": len(collecter_valeurs(racines)),
+    data = generer_modele(documents)
+    return json.dumps({"ok": True,
+                       "sheets": len(documents) + (1 if len(documents) > 1 else 0),
+                       "rows": len(collecter_valeurs([r for _, r in documents])),
                        "content": base64.b64encode(data).decode("ascii")})
 
 

@@ -698,9 +698,13 @@ $("btn-modele").onclick = async () => {
     }
     saveFile("referentiel-modele.xlsx", base64ToBytes(res.content),
              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    const onglets = state.xml.length > 1
+      ? `${res.sheets} onglets : un par facture, plus « Toutes les factures » pour ` +
+        "les valeurs communes"
+      : "1 onglet";
     $("ref-status").textContent =
-      `Modèle téléchargé (${res.rows} balises). Remplissez la colonne « Valeur ` +
-      `attendue » puis redéposez-le ici.`;
+      `Modèle téléchargé — ${onglets}. Remplissez la colonne « Valeur attendue » ` +
+      "puis redéposez le fichier ici.";
   } catch (err) {
     $("ref-status").textContent = "Échec : " + err.message;
   }

@@ -187,6 +187,29 @@ balise, son chemin complet et sa valeur actuelle. Vous ne remplissez que la
 colonne « Valeur attendue », et vous redéposez le fichier. Aucun chemin à écrire
 à la main.
 
+#### Un onglet par facture
+
+Deux factures n'ont pas forcément les mêmes balises : un onglet unique
+mélangerait leurs structures et masquerait ce qui est propre à chacune. Le
+classeur généré contient donc :
+
+- un onglet **« Toutes les factures »** (dès qu'il y en a plusieurs), listant les
+  balises présentes dans **tous** les fichiers. C'est là que se mettent les
+  constantes : votre numéro de TVA, la devise, le ProfileID — inutile de les
+  recopier partout ;
+- puis **un onglet par facture**, nommé d'après le fichier, avec ses balises à
+  elle.
+
+Une règle écrite sur l'onglet d'une facture **ne s'applique qu'à cette facture**.
+Et si la même balise est réglée aux deux endroits, **le particulier l'emporte sur
+le général** : l'onglet de la facture fait exception à la règle commune.
+
+Le rapprochement se fait sur le nom du fichier sans son extension. Excel limitant
+les noms d'onglet à 31 caractères, les noms longs sont tronqués — des deux côtés
+de la même façon, la correspondance reste donc valable. Un onglet dont le nom ne
+correspond à aucun fichier déposé s'applique à tous, ce qui permet aussi
+d'organiser ses règles par thème plutôt que par facture.
+
 | Colonne | Rôle |
 |---|---|
 | **Chemin** | quelle balise contrôler (voir ci-dessous) |

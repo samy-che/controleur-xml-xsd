@@ -41,10 +41,16 @@ ANY_DEPTH = "**"
 
 # --------------------------------------------------------------------- lecture
 
-def _lire_xlsx(data: bytes) -> List[List[str]]:
-    """Lit la premiere feuille d'un .xlsx. Un classeur est un ZIP de XML : la
-    bibliotheque standard et lxml suffisent, ce qui evite une dependance
-    absente de Pyodide."""
+REL = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+
+
+def _lire_xlsx(data: bytes) -> List[Tuple[str, List[List[str]]]]:
+    """Lit TOUTES les feuilles d'un .xlsx, dans l'ordre du classeur.
+
+    Un classeur est un ZIP de XML : la bibliotheque standard et lxml suffisent,
+    ce qui evite openpyxl, absent de Pyodide. Le nom des feuilles compte ici :
+    il rattache un jeu de regles a une facture precise.
+    """
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         noms = archive.namelist()
         partages: List[str] = []
@@ -53,29 +59,50 @@ def _lire_xlsx(data: bytes) -> List[List[str]]:
             for si in racine.iter(XLSX + "si"):
                 partages.append("".join(t.text or "" for t in si.iter(XLSX + "t")))
 
-        feuilles = sorted(n for n in noms if re.match(r"xl/worksheets/sheet\d+\.xml$", n))
-        if not feuilles:
-            raise ValueError("classeur sans feuille de calcul")
-        feuille = etree.fromstring(archive.read(feuilles[0]))
+        # workbook.xml donne les noms et l'ordre ; les rels donnent les fichiers
+        cibles: Dict[str, str] = {}
+        if "xl/_rels/workbook.xml.rels" in noms:
+            rels = etree.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+            for rel in rels:
+                cible = rel.get("Target") or ""
+                cibles[rel.get("Id")] = "xl/" + cible.lstrip("/").replace("../", "")
 
-        lignes: List[List[str]] = []
-        for row in feuille.iter(XLSX + "row"):
-            cellules: List[str] = []
-            for cell in row.iter(XLSX + "c"):
-                # la reference (A1, C3…) donne la colonne : on comble les trous
-                colonne = _index_colonne(cell.get("r"))
-                while colonne is not None and len(cellules) < colonne:
-                    cellules.append("")
-                valeur = cell.find(XLSX + "v")
-                texte = valeur.text if valeur is not None else None
-                if cell.get("t") == "s" and texte is not None:
-                    index = int(texte)
-                    texte = partages[index] if index < len(partages) else ""
-                elif cell.get("t") == "inlineStr":
-                    texte = "".join(t.text or "" for t in cell.iter(XLSX + "t"))
-                cellules.append((texte or "").strip())
-            lignes.append(cellules)
-        return lignes
+        ordre: List[Tuple[str, str]] = []
+        if "xl/workbook.xml" in noms:
+            classeur = etree.fromstring(archive.read("xl/workbook.xml"))
+            for sheet in classeur.iter(XLSX + "sheet"):
+                chemin = cibles.get(sheet.get(REL + "id"))
+                if chemin and chemin in noms:
+                    ordre.append((sheet.get("name") or "", chemin))
+        if not ordre:
+            ordre = [("", n) for n in
+                     sorted(n for n in noms
+                            if re.match(r"xl/worksheets/sheet\d+\.xml$", n))]
+        if not ordre:
+            raise ValueError("classeur sans feuille de calcul")
+
+        feuilles: List[Tuple[str, List[List[str]]]] = []
+        for nom, chemin in ordre:
+            feuille = etree.fromstring(archive.read(chemin))
+            lignes: List[List[str]] = []
+            for row in feuille.iter(XLSX + "row"):
+                cellules: List[str] = []
+                for cell in row.iter(XLSX + "c"):
+                    # la reference (A1, C3…) donne la colonne : on comble les trous
+                    colonne = _index_colonne(cell.get("r"))
+                    while colonne is not None and len(cellules) < colonne:
+                        cellules.append("")
+                    valeur = cell.find(XLSX + "v")
+                    texte = valeur.text if valeur is not None else None
+                    if cell.get("t") == "s" and texte is not None:
+                        index = int(texte)
+                        texte = partages[index] if index < len(partages) else ""
+                    elif cell.get("t") == "inlineStr":
+                        texte = "".join(t.text or "" for t in cell.iter(XLSX + "t"))
+                    cellules.append((texte or "").strip())
+                lignes.append(cellules)
+            feuilles.append((nom, lignes))
+        return feuilles
 
 
 def _index_colonne(reference: Optional[str]) -> Optional[int]:
@@ -107,16 +134,29 @@ def _lire_csv(data: bytes) -> List[List[str]]:
             for ligne in csv.reader(io.StringIO(texte), delimiter=separateur)]
 
 
-def lire_classeur(data: bytes, nom: str) -> List[List[str]]:
+def lire_classeur(data: bytes, nom: str) -> List[Tuple[str, List[List[str]]]]:
+    """Renvoie [(nom de feuille, lignes)]. Un CSV n'a qu'une feuille, sans nom."""
     if nom.lower().endswith((".xlsx", ".xlsm")):
         return _lire_xlsx(data)
     if nom.lower().endswith((".csv", ".txt")):
-        return _lire_csv(data)
+        return [("", _lire_csv(data))]
     # on tente le ZIP, puis le texte
     try:
         return _lire_xlsx(data)
     except Exception:
-        return _lire_csv(data)
+        return [("", _lire_csv(data))]
+
+
+FEUILLE_COMMUNE = "Toutes les factures"
+_INTERDITS_FEUILLE = re.compile(r"[:\\/?*\[\]]")
+
+
+def nom_feuille(nom_fichier: str) -> str:
+    """Nom d'onglet deduit d'un nom de fichier : Excel limite a 31 caracteres et
+    interdit  : \\ / ? * [ ]  . La meme fonction sert a generer et a rapprocher."""
+    base = nom_fichier.replace("\\", "/").split("/")[-1]
+    base = re.sub(r"\.[^.]*$", "", base)
+    return (_INTERDITS_FEUILLE.sub("-", base)[:31] or "Feuille")
 
 
 # --------------------------------------------------------------------- regles
@@ -129,10 +169,18 @@ class Regle:
     cle_valeur: str = ""             # valeur que doit avoir cette balise
     commentaire: str = ""
     ligne: int = 0                   # ligne du classeur, pour les messages
+    feuille: str = ""                # onglet d'origine : rattache la regle a un fichier
 
     @property
     def conditionnelle(self) -> bool:
         return bool(self.cle_chemin and self.cle_valeur)
+
+    def concerne(self, nom_fichier: str) -> bool:
+        """Une regle d'un onglet nomme d'apres une facture ne vaut que pour elle.
+        Les autres onglets (dont « Toutes les factures ») valent pour tous."""
+        if not self.feuille or self.feuille == FEUILLE_COMMUNE:
+            return True
+        return self.feuille == nom_feuille(nom_fichier or "")
 
 
 # intitules acceptes pour chaque colonne, en minuscules sans accents
@@ -157,7 +205,45 @@ def _normaliser(texte: str) -> str:
     return re.sub(r"\s+", " ", texte)
 
 
-def charger_regles(lignes: Sequence[Sequence[str]]) -> Tuple[List[Regle], List[str]]:
+def charger_regles(feuilles) -> Tuple[List[Regle], List[str]]:
+    """Charge les regles de toutes les feuilles d'un classeur.
+
+    Accepte aussi bien la liste de feuilles renvoyee par `lire_classeur` que de
+    simples lignes, pour rester utilisable depuis un script.
+    """
+    if feuilles and isinstance(feuilles[0], (list, tuple)) and len(feuilles[0]) == 2 \
+            and isinstance(feuilles[0][0], str) and isinstance(feuilles[0][1], list):
+        blocs = list(feuilles)
+    else:
+        blocs = [("", list(feuilles))]
+
+    regles: List[Regle] = []
+    problemes: List[str] = []
+    muettes: List[Tuple[str, List[str]]] = []
+    for nom, lignes in blocs:
+        obtenues, soucis = _charger_feuille(lignes, nom)
+        regles.extend(obtenues)
+        if obtenues:
+            problemes.extend(soucis)
+        else:
+            # une feuille sans regle est le cas courant : l'utilisateur ne
+            # remplit que les onglets qui l'interessent. On ne s'en plaint que
+            # si AUCUNE feuille du classeur n'a produit quoi que ce soit.
+            muettes.append((nom or "(feuille unique)", soucis))
+
+    if not regles:
+        if len(blocs) > 1:
+            problemes.append(
+                "Aucune règle exploitable : la colonne « Valeur attendue » est vide "
+                "sur les %d feuilles (%s)."
+                % (len(blocs), ", ".join(nom for nom, _ in muettes[:5])))
+        else:
+            problemes.extend(muettes[0][1] if muettes else [])
+    return regles, problemes
+
+
+def _charger_feuille(lignes: Sequence[Sequence[str]],
+                     feuille: str = "") -> Tuple[List[Regle], List[str]]:
     """Reconnait les colonnes par leur intitule, quel que soit leur ordre."""
     problemes: List[str] = []
     if not lignes:
@@ -197,12 +283,14 @@ def charger_regles(lignes: Sequence[Sequence[str]]) -> Tuple[List[Regle], List[s
         cle_valeur = cellule(ligne, "cle_valeur")
         if bool(cle_chemin) != bool(cle_valeur):
             problemes.append(
-                "Ligne %d : « %s » — la condition est incomplète (il faut la balise "
-                "clé ET sa valeur). Règle ignorée." % (numero, cible))
+                "%sligne %d : « %s » — la condition est incomplète (il faut la balise "
+                "clé ET sa valeur). Règle ignorée."
+                % ("Onglet « %s », " % feuille if feuille else "", numero, cible))
             continue
         regles.append(Regle(cible=cible, attendu=attendu, cle_chemin=cle_chemin,
                             cle_valeur=cle_valeur,
-                            commentaire=cellule(ligne, "commentaire"), ligne=numero))
+                            commentaire=cellule(ligne, "commentaire"), ligne=numero,
+                            feuille=feuille))
 
     if not regles and not problemes:
         problemes.append("Aucune règle exploitable : la colonne « Valeur attendue » "
@@ -311,10 +399,21 @@ def _texte(el) -> str:
     return (el.text or "").strip()
 
 
-def controler(racine, regles: Sequence[Regle]) -> List[Ecart]:
-    """Confronte un document au referentiel. Ne modifie rien."""
+def controler(racine, regles: Sequence[Regle], nom_fichier: str = "") -> List[Ecart]:
+    """Confronte un document au referentiel. Ne modifie rien.
+
+    Une regle inscrite sur l'onglet d'une facture ne vaut que pour elle, et prend
+    le pas sur une regle generale visant la meme balise : le particulier l'emporte
+    sur le general, c'est ce qu'on attend d'un referentiel.
+    """
+    applicables = [r for r in regles if r.concerne(nom_fichier)]
+    specifiques = {r.cible for r in applicables if r.feuille
+                   and r.feuille != FEUILLE_COMMUNE}
     ecarts: List[Ecart] = []
-    for regle in regles:
+    for regle in applicables:
+        if regle.cible in specifiques and (
+                not regle.feuille or regle.feuille == FEUILLE_COMMUNE):
+            continue                       # une regle propre au fichier prend le relais
         if regle.conditionnelle:
             porteurs = trouver(racine, regle.cle_chemin)
             if not any(_texte(el) == regle.cle_valeur for el in porteurs):
@@ -375,16 +474,7 @@ def _lettre(index: int) -> str:
     return nom
 
 
-def generer_modele(racines: Sequence) -> bytes:
-    """Produit un .xlsx pret a remplir : un ligne par balise, chemin et valeur
-    actuelle deja renseignes. L'utilisateur n'a que la colonne « Valeur
-    attendue » a completer, ce qui evite d'ecrire des chemins a la main."""
-    lignes = [ENTETES]
-    for chemin, valeur, nombre in collecter_valeurs(racines):
-        commentaire = ("%d valeurs différentes selon les fichiers" % nombre
-                       if nombre > 1 else "")
-        lignes.append([chemin, valeur, "", "", "", commentaire])
-
+def _feuille_xml(lignes: Sequence[Sequence[str]]) -> str:
     corps = []
     for numero, ligne in enumerate(lignes, start=1):
         cellules = []
@@ -395,8 +485,7 @@ def generer_modele(racines: Sequence) -> bytes:
                 '<c r="%s%d" t="inlineStr"><is><t xml:space="preserve">%s</t></is></c>'
                 % (_lettre(colonne), numero, _echapper(valeur)))
         corps.append('<row r="%d">%s</row>' % (numero, "".join(cellules)))
-
-    feuille = (
+    return (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
         '<cols><col min="1" max="1" width="60"/><col min="2" max="2" width="24"/>'
@@ -404,11 +493,32 @@ def generer_modele(racines: Sequence) -> bytes:
         '<col min="5" max="5" width="24"/><col min="6" max="6" width="40"/></cols>'
         '<sheetData>%s</sheetData></worksheet>' % "".join(corps))
 
+
+def _ecrire_classeur(feuilles: Sequence[Tuple[str, Sequence[Sequence[str]]]]) -> bytes:
+    """Assemble un .xlsx multi-feuilles. Un classeur n'est qu'une archive de XML :
+    quatre pieces de description suffisent, plus une par feuille."""
+    onglets = []
+    relations = []
+    overrides = []
+    fichiers = []
+    for index, (nom, lignes) in enumerate(feuilles, start=1):
+        chemin = "xl/worksheets/sheet%d.xml" % index
+        onglets.append('<sheet name="%s" sheetId="%d" r:id="rId%d"/>'
+                       % (_echapper(nom), index, index))
+        relations.append(
+            '<Relationship Id="rId%d" Type="http://schemas.openxmlformats.org/'
+            'officeDocument/2006/relationships/worksheet" '
+            'Target="worksheets/sheet%d.xml"/>' % (index, index))
+        overrides.append(
+            '<Override PartName="/%s" ContentType="application/vnd.openxmlformats-'
+            'officedocument.spreadsheetml.worksheet+xml"/>' % chemin)
+        fichiers.append((chemin, _feuille_xml(lignes)))
+
     classeur = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
         'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-        '<sheets><sheet name="Référentiel" sheetId="1" r:id="rId1"/></sheets></workbook>')
+        '<sheets>%s</sheets></workbook>' % "".join(onglets))
 
     types = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -416,9 +526,7 @@ def generer_modele(racines: Sequence) -> bytes:
         '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.'
         'relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>'
         '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats'
-        '-officedocument.spreadsheetml.sheet.main+xml"/>'
-        '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.'
-        'openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>')
+        '-officedocument.spreadsheetml.sheet.main+xml"/>%s</Types>' % "".join(overrides))
 
     rels = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -428,9 +536,8 @@ def generer_modele(racines: Sequence) -> bytes:
 
     rels_classeur = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/'
-        '2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>')
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/'
+        'relationships">%s</Relationships>' % "".join(relations))
 
     tampon = io.BytesIO()
     with zipfile.ZipFile(tampon, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -438,5 +545,64 @@ def generer_modele(racines: Sequence) -> bytes:
         archive.writestr("_rels/.rels", rels)
         archive.writestr("xl/workbook.xml", classeur)
         archive.writestr("xl/_rels/workbook.xml.rels", rels_classeur)
-        archive.writestr("xl/worksheets/sheet1.xml", feuille)
+        for chemin, contenu in fichiers:
+            archive.writestr(chemin, contenu)
     return tampon.getvalue()
+
+
+def generer_modele(documents: Sequence) -> bytes:
+    """Produit un .xlsx pret a remplir, **un onglet par facture**.
+
+    Deux factures n'ont pas forcement les memes balises : un onglet unique
+    melangerait leurs structures et masquerait ce qui est propre a chacune. Une
+    regle inscrite sur l'onglet d'une facture ne vaudra donc que pour elle.
+
+    Quand il y a plusieurs fichiers, un premier onglet « Toutes les factures »
+    regroupe les balises presentes partout : c'est la que se mettent les
+    constantes (votre TVA, la devise), pour ne pas les recopier partout.
+
+    `documents` : liste de (nom de fichier, racine) — ou de racines seules.
+    """
+    paires = []
+    for element in documents:
+        if isinstance(element, (list, tuple)) and len(element) == 2:
+            paires.append((str(element[0]), element[1]))
+        else:
+            paires.append(("", element))
+
+    def bloc(valeurs, entete_commentaire=""):
+        lignes = [ENTETES]
+        if entete_commentaire:
+            lignes.append(["", "", "", "", "", entete_commentaire])
+        for chemin, valeur, nombre in valeurs:
+            lignes.append([chemin, valeur, "", "", "",
+                           "%d valeurs différentes selon les fichiers" % nombre
+                           if nombre > 1 else ""])
+        return lignes
+
+    feuilles: List[Tuple[str, List[List[str]]]] = []
+    if len(paires) > 1:
+        communs = None
+        for _, racine in paires:
+            chemins = {c for c, _, _ in collecter_valeurs([racine])}
+            communs = chemins if communs is None else (communs & chemins)
+        valeurs = [v for v in collecter_valeurs([r for _, r in paires])
+                   if v[0] in (communs or set())]
+        feuilles.append((FEUILLE_COMMUNE, bloc(
+            valeurs, "Balises présentes dans les %d fichiers. Les règles écrites ici "
+                     "s'appliquent à tous." % len(paires))))
+
+    utilises = {FEUILLE_COMMUNE}
+    for index, (nom, racine) in enumerate(paires, start=1):
+        onglet = nom_feuille(nom) if nom else "Facture %d" % index
+        base, compteur = onglet, 2
+        while onglet in utilises:            # Excel refuse deux onglets homonymes
+            suffixe = " (%d)" % compteur
+            onglet = base[:31 - len(suffixe)] + suffixe
+            compteur += 1
+        utilises.add(onglet)
+        commentaire = ("Règles propres à ce fichier ; elles priment sur l'onglet commun."
+                       if len(paires) > 1 else "")
+        feuilles.append((onglet, bloc(collecter_valeurs([racine]), commentaire)))
+
+    return _ecrire_classeur(feuilles)

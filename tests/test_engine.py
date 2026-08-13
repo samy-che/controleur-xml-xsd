@@ -859,15 +859,93 @@ class TestReferentiel(unittest.TestCase):
 
     def test_lecture_xlsx_et_csv(self):
         from xsdfix.referentiel import generer_modele, lire_classeur
-        classeur = generer_modele([self._racine()])
-        lignes = lire_classeur(classeur, "modele.xlsx")
+        classeur = generer_modele([("facture.xml", self._racine())])
+        feuilles = lire_classeur(classeur, "modele.xlsx")
+        self.assertEqual(len(feuilles), 1)          # un seul fichier : un seul onglet
+        nom, lignes = feuilles[0]
+        self.assertEqual(nom, "facture")
         self.assertEqual(lignes[0][:2], ["Chemin", "Valeur actuelle"])
         chemins = [l[0] for l in lignes[1:]]
         self.assertIn("/Invoice/AccountingSupplierParty/Party/PartyTaxScheme/CompanyID",
                       chemins)
 
         csv_data = "Chemin;Valeur attendue\nCompanyID;3145\n".encode("utf-8")
-        self.assertEqual(lire_classeur(csv_data, "ref.csv")[1], ["CompanyID", "3145"])
+        feuilles_csv = lire_classeur(csv_data, "ref.csv")
+        self.assertEqual(feuilles_csv[0][1][1], ["CompanyID", "3145"])
+
+
+class TestReferentielMultiOnglets(unittest.TestCase):
+    """Deux factures n'ont pas les mêmes balises : un onglet par fichier, et une
+    règle écrite sur l'onglet d'une facture ne vaut que pour elle."""
+
+    def _racines(self):
+        from lxml import etree
+        a = etree.fromstring(b'<Facture xmlns="urn:t"><Vendeur><TVA>11234</TVA></Vendeur>'
+                             b'<Client><Code>1084</Code><TVA>FR999</TVA></Client></Facture>')
+        b = etree.fromstring(b'<Facture xmlns="urn:t"><Vendeur><TVA>11234</TVA></Vendeur>'
+                             b'<Client><Code>2201</Code></Client><Remise>10</Remise></Facture>')
+        return a, b
+
+    def test_un_onglet_par_facture(self):
+        from xsdfix.referentiel import generer_modele, lire_classeur
+        a, b = self._racines()
+        classeur = generer_modele([("facture-001.xml", a), ("facture-002.xml", b)])
+        feuilles = dict(lire_classeur(classeur, "m.xlsx"))
+        self.assertEqual(list(feuilles),
+                         ["Toutes les factures", "facture-001", "facture-002"])
+        # chaque onglet porte les balises de SA facture
+        chemins_1 = {l[0] for l in feuilles["facture-001"][1:] if l and l[0]}
+        chemins_2 = {l[0] for l in feuilles["facture-002"][1:] if l and l[0]}
+        self.assertIn("/Facture/Client/TVA", chemins_1)
+        self.assertNotIn("/Facture/Client/TVA", chemins_2)
+        self.assertIn("/Facture/Remise", chemins_2)
+        self.assertNotIn("/Facture/Remise", chemins_1)
+        # l'onglet commun ne garde que ce qui existe partout
+        communs = {l[0] for l in feuilles["Toutes les factures"][1:] if l and l[0]}
+        self.assertIn("/Facture/Vendeur/TVA", communs)
+        self.assertNotIn("/Facture/Remise", communs)
+
+    def test_regle_d_onglet_limitee_a_sa_facture(self):
+        from xsdfix.referentiel import charger_regles, controler
+        entete = ["Chemin", "Valeur attendue"]
+        feuilles = [
+            ("Toutes les factures", [entete, ["Vendeur/TVA", "3145"]]),
+            ("facture-001", [entete, ["Client/TVA", "FR55987654321"]]),
+        ]
+        regles, soucis = charger_regles(feuilles)
+        self.assertEqual(soucis, [])
+        a, b = self._racines()
+
+        ecarts_a = controler(a, regles, "facture-001.xml")
+        self.assertEqual(sorted(e.attendu for e in ecarts_a),
+                         ["3145", "FR55987654321"])
+        # la règle propre à facture-001 ne doit pas s'appliquer à facture-002
+        ecarts_b = controler(b, regles, "facture-002.xml")
+        self.assertEqual([e.attendu for e in ecarts_b], ["3145"])
+
+    def test_le_particulier_prime_sur_le_general(self):
+        from xsdfix.referentiel import charger_regles, controler
+        entete = ["Chemin", "Valeur attendue"]
+        feuilles = [
+            ("Toutes les factures", [entete, ["Vendeur/TVA", "3145"]]),
+            ("facture-001", [entete, ["Vendeur/TVA", "9999"]]),   # exception
+        ]
+        regles, _ = charger_regles(feuilles)
+        a, _ = self._racines()
+        ecarts = controler(a, regles, "facture-001.xml")
+        self.assertEqual(len(ecarts), 1, [e.label for e in ecarts])
+        self.assertEqual(ecarts[0].attendu, "9999")
+
+    def test_nom_d_onglet_tronque_et_rapproche(self):
+        """Excel limite les onglets à 31 caractères : le rapprochement doit se
+        faire sur le nom tronqué, sinon la règle ne retrouverait pas son fichier."""
+        from xsdfix.referentiel import Regle, nom_feuille
+        long_nom = "C_eInv_380_1540029088_20260731085922_20260731.xml"
+        onglet = nom_feuille(long_nom)
+        self.assertLessEqual(len(onglet), 31)
+        self.assertTrue(Regle(cible="A", attendu="x", feuille=onglet).concerne(long_nom))
+        self.assertFalse(Regle(cible="A", attendu="x", feuille=onglet)
+                         .concerne("autre-facture.xml"))
 
 
 if __name__ == "__main__":
