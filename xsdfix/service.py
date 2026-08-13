@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Tuple
 from lxml import etree
 
 from .corrector import Change, Options, correct, document_namespaces
+from .referentiel import Ecart, Regle, controler
 from .schema_model import SchemaSet, split_tag
 from .validator import (CAT_MISSING, CAT_ORDER, CAT_ROOT, CAT_UNEXPECTED,
                         ValidationError, Validator)
@@ -43,6 +44,7 @@ class FileReport:
     fatal: Optional[str] = None
     note: Optional[str] = None
     encoding: str = "UTF-8"
+    ecarts: List[Ecart] = field(default_factory=list)   # ecarts avec le referentiel
 
     def as_dict(self, include_content: bool = True) -> Dict:
         out = {
@@ -54,6 +56,7 @@ class FileReport:
             "correctedName": self.corrected_name,
             "fatal": self.fatal,
             "note": self.note,
+            "ecarts": [e.as_dict() for e in self.ecarts],
         }
         if include_content and self.corrected is not None:
             # l'apercu est decode avec l'encodage reel du document, sinon les
@@ -285,8 +288,10 @@ class Session:
     """
 
     def __init__(self, xsds: List[InputFile], options: Options,
-                 preferred_xsd: Optional[str] = None):
+                 preferred_xsd: Optional[str] = None,
+                 regles: Optional[List[Regle]] = None):
         self.options = options
+        self.regles = regles or []
         self.error: Optional[str] = None
         self.warnings: List[str] = []
         self.main_xsd: Optional[str] = None
@@ -338,6 +343,10 @@ class Session:
             return result
 
         result.encoding = tree.docinfo.encoding or "UTF-8"
+        if self.regles:
+            # le referentiel porte sur les donnees, independamment du XSD :
+            # un fichier parfaitement valide peut contenir un mauvais numero
+            result.ecarts = controler(tree.getroot(), self.regles)
         root_qname = split_tag(tree.getroot().tag)
         namespaces = document_namespaces(tree.getroot())
         result.errors_before = _refine(self.validator.validate(tree), self.schema,
@@ -399,14 +408,15 @@ class Session:
 
 
 def analyze(xsds: List[InputFile], xmls: List[InputFile], options: Options,
-            preferred_xsd: Optional[str] = None) -> AnalysisReport:
+            preferred_xsd: Optional[str] = None,
+            regles: Optional[List[Regle]] = None) -> AnalysisReport:
     """Valide et corrige un lot de XML face a un jeu de XSD."""
     report = AnalysisReport()
     if not xmls:
         report.schema_error = "Aucun XML fourni."
         return report
 
-    session = Session(xsds, options, preferred_xsd)
+    session = Session(xsds, options, preferred_xsd, regles=regles)
     try:
         report.main_xsd = session.main_xsd
         if not session.ok:

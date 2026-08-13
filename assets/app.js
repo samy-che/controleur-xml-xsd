@@ -6,9 +6,9 @@ const PYODIDE_VERSION = "314.0.4";
 const PYODIDE_MJS = `https://cdn.jsdelivr.net/npm/pyodide@${PYODIDE_VERSION}/pyodide.mjs`;
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const ENGINE_MODULES = ["__init__", "schema_model", "validator", "corrector",
-                        "flat_schema", "service", "webapi"];
+                        "flat_schema", "referentiel", "service", "webapi"];
 
-const state = { xsd: [], xml: [], results: [], webapi: null };
+const state = { xsd: [], xml: [], ref: [], results: [], webapi: null };
 
 const $ = (id) => document.getElementById(id);
 
@@ -132,19 +132,58 @@ function relName(file) {
   return file.relPath || file.webkitRelativePath || file.name;
 }
 
+const EXTENSIONS = {
+  xsd: [".xsd"],
+  xml: [".xml"],
+  ref: [".xlsx", ".xlsm", ".csv", ".txt"],
+};
+
 function addFiles(kind, files) {
   for (const file of files) {
     const name = file.name.toLowerCase();
-    if (kind === "xsd" && !name.endsWith(".xsd")) continue;
-    if (kind === "xml" && !name.endsWith(".xml")) continue;
+    if (!EXTENSIONS[kind].some((ext) => name.endsWith(ext))) continue;
+    if (kind === "ref") state.ref = [];          // un seul référentiel à la fois
     if (state[kind].some((f) => f.name === file.name && f.size === file.size)) continue;
     state[kind].push(file);
   }
   renderFiles();
+  if (kind === "ref") loadReferentiel();
+}
+
+async function loadReferentiel() {
+  const zone = $("dz-ref");
+  zone.classList.toggle("filled", state.ref.length > 0);
+  if (!state.ref.length) {
+    $("ref-status").textContent = "";
+    try {
+      const webapi = await engine();
+      webapi.load_referentiel(JSON.stringify({ file: null }));
+    } catch (e) { /* moteur pas encore prêt : rien à décharger */ }
+    return;
+  }
+  $("ref-status").textContent = "Lecture du référentiel…";
+  try {
+    const webapi = await engine();
+    const file = state.ref[0];
+    const res = JSON.parse(webapi.load_referentiel(JSON.stringify({
+      file: { name: file.name, content: await readAsBase64(file) },
+    })));
+    if (!res.ok) {
+      $("ref-status").textContent = res.error || "Référentiel inexploitable.";
+      return;
+    }
+    let texte = `${res.rules} règle(s) chargée(s).`;
+    if (res.problems && res.problems.length) {
+      texte += " " + res.problems.length + " ligne(s) ignorée(s) : " + res.problems[0];
+    }
+    $("ref-status").textContent = texte;
+  } catch (err) {
+    $("ref-status").textContent = "Échec : " + err.message;
+  }
 }
 
 function renderFiles() {
-  for (const kind of ["xsd", "xml"]) {
+  for (const kind of ["xsd", "xml", "ref"]) {
     const list = $("list-" + kind);
     list.innerHTML = "";
     state[kind].forEach((file, index) => {
@@ -156,6 +195,7 @@ function renderFiles() {
       li.querySelector(".rm").onclick = () => {
         state[kind].splice(index, 1);
         renderFiles();
+        if (kind === "ref") loadReferentiel();
       };
       list.appendChild(li);
     });
@@ -416,12 +456,15 @@ function renderSummary(counts) {
     counts = { valid: 0, fixed: 0, partial: 0, failed: 0, error: 0 };
     for (const result of state.results) counts[result.status]++;
   }
+  const ecarts = state.results.reduce(
+    (total, r) => total + ((r.ecarts && r.ecarts.length) || 0), 0);
   const chips = [
     ["total", state.results.length, "fichier(s)"],
     ["valid", counts.valid, "déjà conforme(s)"],
     ["fixed", counts.fixed, "corrigé(s)"],
     ["partial", counts.partial, "partiellement corrigé(s)"],
     ["failed", counts.failed + counts.error, "en échec"],
+    ["partial", ecarts, "écart(s) de données"],
   ];
   const box = $("summary");
   box.innerHTML = "";
@@ -432,17 +475,21 @@ function renderSummary(counts) {
 }
 
 function buildCard(result) {
+  const ecarts = (result.ecarts && result.ecarts.length) || 0;
   const card = el("div", "card");
-  if (result.status !== "valid") card.classList.add("open");
+  // un fichier conforme au XSD mais en écart avec le référentiel doit s'ouvrir :
+  // sinon l'écart resterait invisible derrière un badge « conforme »
+  if (result.status !== "valid" || ecarts) card.classList.add("open");
 
   const head = el("div", "card-head");
   head.appendChild(el("span", "arrow", "▶"));
   head.appendChild(el("span", "name", result.name));
   const remaining = result.errorsAfter.length;
   let meta = result.errorsBefore.length + " erreur(s)";
-  if (result.status === "valid") meta = "aucune erreur";
+  if (result.status === "valid") meta = "conforme au XSD";
   else meta += " · " + result.changes.length + " correction(s)" +
                (remaining ? " · " + remaining + " restante(s)" : "");
+  if (ecarts) meta += " · " + ecarts + " écart(s) de données";
   head.appendChild(el("span", "meta", meta));
   head.appendChild(el("span", "badge " + result.status, STATUS_LABEL[result.status]));
   head.onclick = () => card.classList.toggle("open");
@@ -476,6 +523,19 @@ function buildCard(result) {
   if (result.errorsAfter.length) {
     body.appendChild(block("À traiter manuellement",
                            result.errorsAfter.map(errorItem("left"))));
+  }
+
+  if (result.ecarts && result.ecarts.length) {
+    body.appendChild(block("Écarts avec le référentiel", result.ecarts.map((ecart) => {
+      const li = el("li", ecart.ambigu ? "err" : "left");
+      li.appendChild(el("span", "tag", ecart.ambigu ? "ambigu" : "donnée"));
+      li.appendChild(document.createTextNode(ecart.label + " "));
+      li.appendChild(el("span", "loc", "(ligne " + ecart.ligne + " du référentiel)"));
+      return li;
+    })));
+    body.appendChild(el("p", "meta",
+      "Ces écarts portent sur les données, pas sur la structure : ils ne sont jamais " +
+      "corrigés automatiquement. Le fichier reste tel quel sur ce point."));
   }
 
   if (result.corrected) {
@@ -586,17 +646,22 @@ document.querySelectorAll("[data-browse]").forEach((button) => {
 });
 $("input-xsd").onchange = (e) => { addFiles("xsd", e.target.files); e.target.value = ""; };
 $("input-xml").onchange = (e) => { addFiles("xml", e.target.files); e.target.value = ""; };
+$("input-ref").onchange = (e) => { addFiles("ref", e.target.files); e.target.value = ""; };
 
 setupDropzone("dz-xsd");
 setupDropzone("dz-xml");
+setupDropzone("dz-ref");
 
 $("btn-run").onclick = run;
 
 $("btn-reset").onclick = () => {
   state.xsd = [];
   state.xml = [];
+  state.ref = [];
   state.results = [];
   renderFiles();
+  loadReferentiel();
+  $("ref-status").textContent = "";
   $("results").classList.add("hidden");
 };
 
@@ -612,6 +677,32 @@ $("btn-sample").onclick = async () => {
     $("status").textContent = "";
   } catch (e) {
     $("status").textContent = "Jeu d'exemple indisponible.";
+  }
+};
+
+$("btn-modele").onclick = async () => {
+  if (!state.xml.length) {
+    $("ref-status").textContent = "Déposez d'abord vos XML : le modèle en est déduit.";
+    return;
+  }
+  $("ref-status").textContent = "Construction du modèle…";
+  try {
+    const webapi = await engine();
+    const xml = await Promise.all(state.xml.map(async (f) => ({
+      name: f.name, content: await readAsBase64(f),
+    })));
+    const res = JSON.parse(webapi.template_base64(JSON.stringify({ xml })));
+    if (!res.ok) {
+      $("ref-status").textContent = res.error;
+      return;
+    }
+    saveFile("referentiel-modele.xlsx", base64ToBytes(res.content),
+             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    $("ref-status").textContent =
+      `Modèle téléchargé (${res.rows} balises). Remplissez la colonne « Valeur ` +
+      `attendue » puis redéposez-le ici.`;
+  } catch (err) {
+    $("ref-status").textContent = "Échec : " + err.message;
   }
 };
 

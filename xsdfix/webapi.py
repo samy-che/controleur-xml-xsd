@@ -21,10 +21,13 @@ from lxml import etree
 
 from .corrector import Options
 from .flat_schema import compile_check, convert, looks_flat, namespaces_from_root
+from .referentiel import (charger_regles, collecter_valeurs, generer_modele,
+                          lire_classeur)
 from .service import AnalysisReport, InputFile, Session, build_zip
 
 _session: Optional[Session] = None
 _report: AnalysisReport = AnalysisReport()
+_regles: List = []            # regles du referentiel, conservees entre les lots
 
 
 def _decode(entries) -> List[InputFile]:
@@ -42,7 +45,8 @@ def open_session(payload_json: str) -> str:
 
     payload = json.loads(payload_json)
     options = Options.from_dict(payload.get("options"))
-    _session = Session(_decode(payload.get("xsd")), options, payload.get("mainXsd"))
+    _session = Session(_decode(payload.get("xsd")), options,
+                       payload.get("mainXsd"), regles=_regles)
     _report = AnalysisReport(main_xsd=_session.main_xsd)
 
     if not _session.ok:
@@ -50,7 +54,48 @@ def open_session(payload_json: str) -> str:
         return json.dumps({"ok": False, "error": _session.error}, ensure_ascii=False)
     _report.schema_warnings = _session.warnings
     return json.dumps({"ok": True, "mainXsd": _session.main_xsd,
-                       "warnings": _session.warnings}, ensure_ascii=False)
+                       "warnings": _session.warnings,
+                       "rules": len(_regles)}, ensure_ascii=False)
+
+
+def load_referentiel(payload_json: str) -> str:
+    """Charge le classeur de référence. Renvoie le nombre de règles et les soucis."""
+    global _regles
+    payload = json.loads(payload_json)
+    entry = payload.get("file")
+    if not entry:
+        _regles = []
+        return json.dumps({"ok": True, "rules": 0})
+    try:
+        lignes = lire_classeur(base64.b64decode(entry.get("content", "")),
+                               str(entry.get("name", "")))
+    except Exception as exc:
+        _regles = []
+        return json.dumps({"ok": False,
+                           "error": "Fichier de référence illisible : %s" % exc},
+                          ensure_ascii=False)
+    _regles, problemes = charger_regles(lignes)
+    return json.dumps({"ok": bool(_regles), "rules": len(_regles),
+                       "problems": problemes,
+                       "error": problemes[0] if (problemes and not _regles) else None},
+                      ensure_ascii=False)
+
+
+def template_base64(payload_json: str) -> str:
+    """Modèle Excel pré-rempli à partir des XML fournis."""
+    payload = json.loads(payload_json)
+    racines = []
+    for entry in payload.get("xml") or []:
+        try:
+            racines.append(etree.fromstring(base64.b64decode(entry.get("content", ""))))
+        except etree.XMLSyntaxError:
+            continue
+    if not racines:
+        return json.dumps({"ok": False,
+                           "error": "Aucun XML lisible pour construire le modèle."})
+    data = generer_modele(racines)
+    return json.dumps({"ok": True, "rows": len(collecter_valeurs(racines)),
+                       "content": base64.b64encode(data).decode("ascii")})
 
 
 def check_one(name: str, content_b64: str) -> str:

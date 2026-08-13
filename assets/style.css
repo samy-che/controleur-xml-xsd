@@ -107,6 +107,19 @@ main { padding: 26px 0 40px; }
 .mainxsd { margin-top: 12px; font-size: 13px; text-align: left; }
 .mainxsd select { margin-left: 6px; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--line); }
 
+/* ---------------------------------------------------------------- référentiel */
+
+.referentiel {
+  margin-top: 18px; padding: 16px 18px; border-radius: var(--radius);
+  border: 1px solid var(--line); background: #fcfcfd;
+}
+.referentiel.filled { border-color: #b9d8c4; background: #f6fbf8; }
+.referentiel h2 { margin: 0 0 6px; font-size: 15px; }
+.referentiel .ref-opt { color: var(--muted); font-weight: 400; font-size: 13px; }
+.referentiel p { margin: 0 0 12px; color: var(--muted); font-size: 13px; max-width: 82ch; }
+.ref-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.referentiel .filelist { max-width: 520px; }
+
 /* ---------------------------------------------------------------- options */
 
 .options { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; }

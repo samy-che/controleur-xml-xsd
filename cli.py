@@ -65,6 +65,9 @@ def main() -> int:
                         help="n'accole pas de commentaire aux balises ajoutées")
     parser.add_argument("--supprimer-inconnus", action="store_true",
                         help="retire les éléments absents du XSD (perte de données)")
+    parser.add_argument("--referentiel", metavar="FICHIER",
+                        help="classeur Excel ou CSV des valeurs de référence ; les "
+                             "écarts sont signalés, jamais corrigés")
     parser.add_argument("--verbeux", "-v", action="store_true")
     args = parser.parse_args()
 
@@ -84,7 +87,17 @@ def main() -> int:
         remove_unknown=args.supprimer_inconnus,
         comment_inserted=not args.sans_commentaires,
     )
-    report = analyze(xsds, xmls, options)
+    regles = []
+    if args.referentiel:
+        from xsdfix.referentiel import charger_regles, lire_classeur
+        with open(args.referentiel, "rb") as handle:
+            regles, soucis = charger_regles(
+                lire_classeur(handle.read(), args.referentiel))
+        for souci in soucis:
+            print("Référentiel : %s" % souci, file=sys.stderr)
+        print("Référentiel : %d règle(s) chargée(s)." % len(regles))
+
+    report = analyze(xsds, xmls, options, regles=regles)
     if report.schema_error:
         print(report.schema_error, file=sys.stderr)
         return 2
@@ -101,6 +114,8 @@ def main() -> int:
             print("        → %s  [%s]" % (change.detail, change.path))
         for error in result.errors_after:
             print("        ! reste : %s" % error.label)
+        for ecart in result.ecarts:
+            print("        ~ écart : %s" % ecart.label)
         if result.fatal:
             print("        ! %s" % result.fatal)
         if result.corrected is not None:

@@ -760,5 +760,115 @@ class TestConvertisseur(unittest.TestCase):
         self.assertEqual(order_of(result), ["ID", "IssueDate", "OrderReference"])
 
 
+class TestReferentiel(unittest.TestCase):
+    """Contrôle des données portées par les balises, face à un classeur de
+    référence. Le XSD dit qu'une balise existe ; lui seul ne dira jamais que
+    le numéro de TVA doit valoir 3145 et non 11234."""
+
+    XML = ('<Invoice xmlns="urn:ubl:Invoice-2" xmlns:cac="urn:ubl:cac" '
+           'xmlns:cbc="urn:ubl:cbc">'
+           '<cac:AccountingSupplierParty><cac:Party><cac:PartyTaxScheme>'
+           '<cbc:CompanyID>11234</cbc:CompanyID>'
+           '</cac:PartyTaxScheme></cac:Party></cac:AccountingSupplierParty>'
+           '<cac:AccountingCustomerParty><cac:Party>'
+           '<cac:PartyIdentification><cbc:ID>1084</cbc:ID></cac:PartyIdentification>'
+           '<cac:PartyTaxScheme><cbc:CompanyID>FR99999999999</cbc:CompanyID>'
+           '</cac:PartyTaxScheme></cac:Party></cac:AccountingCustomerParty>'
+           '</Invoice>')
+
+    def _racine(self):
+        from lxml import etree
+        return etree.fromstring(self.XML.encode())
+
+    def _controler(self, lignes):
+        from xsdfix.referentiel import charger_regles, controler
+        regles, soucis = charger_regles(lignes)
+        self.assertEqual(soucis, [], "le classeur doit être lisible")
+        return controler(self._racine(), regles)
+
+    ENTETE = ["Chemin", "Valeur attendue", "Balise clé", "Valeur clé", "Commentaire"]
+
+    def test_valeur_constante(self):
+        ecarts = self._controler([self.ENTETE,
+                                  ["AccountingSupplierParty//CompanyID", "3145", "", "", ""]])
+        self.assertEqual(len(ecarts), 1)
+        self.assertEqual(ecarts[0].actuel, "11234")
+        self.assertEqual(ecarts[0].attendu, "3145")
+
+    def test_meme_balise_deux_emplacements(self):
+        """Le cœur du problème : CompanyID existe chez le vendeur et chez le
+        client. Deux règles distinctes doivent viser chacune la bonne."""
+        ecarts = self._controler([
+            self.ENTETE,
+            ["AccountingSupplierParty//CompanyID", "11234", "", "", ""],   # correct
+            ["AccountingCustomerParty//CompanyID", "FR55987654321", "", "", ""],
+        ])
+        self.assertEqual(len(ecarts), 1, [e.label for e in ecarts])
+        self.assertIn("AccountingCustomerParty", ecarts[0].chemin)
+
+    def test_regle_conditionnee_par_une_cle(self):
+        regles = [self.ENTETE,
+                  ["AccountingCustomerParty//CompanyID", "FR55987654321",
+                   "AccountingCustomerParty//PartyIdentification/ID", "1084", ""],
+                  ["AccountingCustomerParty//CompanyID", "FR12000000009",
+                   "AccountingCustomerParty//PartyIdentification/ID", "2201", ""]]
+        ecarts = self._controler(regles)
+        # seule la règle du client 1084 s'applique à ce fichier
+        self.assertEqual(len(ecarts), 1)
+        self.assertEqual(ecarts[0].attendu, "FR55987654321")
+
+    def test_regle_ambigue_refuse_de_deviner(self):
+        ecarts = self._controler([self.ENTETE, ["CompanyID", "XXX", "", "", ""]])
+        self.assertEqual(len(ecarts), 1)
+        self.assertTrue(ecarts[0].ambigu)
+        self.assertEqual(len(ecarts[0].candidats), 2)
+        self.assertIn("Précisez le chemin", ecarts[0].label)
+
+    def test_condition_incomplete_signalee(self):
+        from xsdfix.referentiel import charger_regles
+        regles, soucis = charger_regles([self.ENTETE,
+                                         ["CompanyID", "X", "UneBalise", "", ""]])
+        self.assertEqual(regles, [])
+        self.assertTrue(any("condition est incomplète" in s for s in soucis), soucis)
+
+    def test_chemin_exact_et_nom_seul(self):
+        from xsdfix.referentiel import trouver
+        racine = self._racine()
+        self.assertEqual(len(trouver(racine, "CompanyID")), 2)
+        self.assertEqual(len(trouver(
+            racine,
+            "/Invoice/AccountingSupplierParty/Party/PartyTaxScheme/CompanyID")), 1)
+        self.assertEqual(len(trouver(racine, "AccountingCustomerParty//CompanyID")), 1)
+
+    def test_le_fichier_n_est_jamais_modifie(self):
+        """Un écart de données se signale, il ne se corrige pas."""
+        xsd = HEAD + '''
+          <xs:element name="R"><xs:complexType><xs:sequence>
+            <xs:element name="A" type="xs:string"/>
+          </xs:sequence></xs:complexType></xs:element>
+        </xs:schema>'''
+        from xsdfix.referentiel import charger_regles
+        regles, _ = charger_regles([["Chemin", "Valeur attendue"], ["A", "bonne"]])
+        report = analyze([InputFile("s.xsd", xsd.encode())],
+                         [InputFile("f.xml", b'<R xmlns="urn:t"><A>mauvaise</A></R>')],
+                         Options(), regles=regles)
+        result = report.results[0]
+        self.assertEqual(result.status, STATUS_VALID)      # conforme au XSD
+        self.assertEqual(len(result.ecarts), 1)            # mais donnée non conforme
+        self.assertIsNone(result.corrected)                # rien n'a été réécrit
+
+    def test_lecture_xlsx_et_csv(self):
+        from xsdfix.referentiel import generer_modele, lire_classeur
+        classeur = generer_modele([self._racine()])
+        lignes = lire_classeur(classeur, "modele.xlsx")
+        self.assertEqual(lignes[0][:2], ["Chemin", "Valeur actuelle"])
+        chemins = [l[0] for l in lignes[1:]]
+        self.assertIn("/Invoice/AccountingSupplierParty/Party/PartyTaxScheme/CompanyID",
+                      chemins)
+
+        csv_data = "Chemin;Valeur attendue\nCompanyID;3145\n".encode("utf-8")
+        self.assertEqual(lire_classeur(csv_data, "ref.csv")[1], ["CompanyID", "3145"])
+
+
 if __name__ == "__main__":
     unittest.main()

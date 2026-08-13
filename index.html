@@ -47,6 +47,22 @@
       </div>
     </div>
 
+    <div class="referentiel" id="dz-ref" data-kind="ref">
+      <input type="file" id="input-ref" accept=".xlsx,.xlsm,.csv,.txt" hidden>
+      <div class="ref-head">
+        <h2>📗 Référentiel de valeurs <span class="ref-opt">— facultatif</span></h2>
+        <p>Le XSD contrôle la structure ; il ne sait pas qu'un numéro de TVA doit valoir
+           <code>3145</code>. Déposez ici un fichier Excel ou CSV de valeurs de référence :
+           les écarts sont <strong>signalés, jamais corrigés d'office</strong>.</p>
+      </div>
+      <div class="ref-actions">
+        <button type="button" class="btn ghost small" data-browse="input-ref">Choisir le fichier</button>
+        <button type="button" class="btn ghost small" id="btn-modele">Générer le modèle Excel</button>
+        <span class="status" id="ref-status"></span>
+      </div>
+      <ul class="filelist" id="list-ref"></ul>
+    </div>
+
     <details class="options">
       <summary>Options de correction</summary>
       <div class="option-grid">

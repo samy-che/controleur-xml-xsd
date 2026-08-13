@@ -171,6 +171,69 @@ seule définition : le convertisseur retient alors **le type le plus permissif**
 contrôler — et **liste chaque arbitrage**. Relisez cette liste, c'est là que la
 conversion perd en précision.
 
+### Référentiel de valeurs (facultatif)
+
+Le XSD contrôle la **structure** : quelles balises, dans quel ordre, de quel
+type. Il ne saura jamais qu'un numéro de TVA doit valoir `3145` et non `11234`.
+Cette source de vérité-là se fournit sous forme de classeur **Excel ou CSV**.
+
+Les écarts sont **signalés, jamais corrigés** : réécrire une donnée métier reste
+une décision humaine. Un fichier peut donc être « conforme » au XSD et présenter
+des écarts de données.
+
+**Le plus simple : laisser l'application produire le modèle.** Déposez vos XML,
+cliquez *Générer le modèle Excel* : vous obtenez un classeur listant chaque
+balise, son chemin complet et sa valeur actuelle. Vous ne remplissez que la
+colonne « Valeur attendue », et vous redéposez le fichier. Aucun chemin à écrire
+à la main.
+
+| Colonne | Rôle |
+|---|---|
+| **Chemin** | quelle balise contrôler (voir ci-dessous) |
+| **Valeur attendue** | la valeur de référence |
+| **Balise clé** *(option)* | balise dont dépend la règle |
+| **Valeur clé** *(option)* | valeur que doit avoir cette balise pour que la règle s'applique |
+| **Commentaire** | libre, repris dans le rapport |
+
+Les colonnes sont reconnues **par leur intitulé**, quel que soit leur ordre.
+
+#### Une même balise à deux endroits
+
+C'est le cas courant : `CompanyID` est le numéro de TVA du vendeur sous
+`AccountingSupplierParty` et celui du client sous `AccountingCustomerParty`. Le
+nom seul ne suffit donc pas à désigner un emplacement. Trois écritures sont
+acceptées, de la plus souple à la plus précise :
+
+| Écriture | Exemple |
+|---|---|
+| Nom seul | `DocumentCurrencyCode` |
+| Chemin abrégé | `AccountingSupplierParty//CompanyID` |
+| Chemin exact | `/Invoice/cac:AccountingSupplierParty/cac:Party/cac:PartyTaxScheme/cbc:CompanyID` |
+
+Les préfixes d'espace de noms sont ignorés : écrivez `cbc:ID` ou `ID`, c'est
+identique.
+
+Si une règle vise **plusieurs emplacements portant des valeurs différentes**,
+l'application **refuse de deviner** : elle signale l'ambiguïté et affiche les
+chemins candidats, à recopier dans le classeur pour lever le doute.
+
+#### Une valeur qui dépend de la facture
+
+Les colonnes « Balise clé » et « Valeur clé » conditionnent une règle :
+
+| Chemin | Valeur attendue | Balise clé | Valeur clé |
+|---|---|---|---|
+| `Vendeur/NumeroTVA` | `3145` | | |
+| `Client/NumeroTVA` | `FR55987654321` | `Client/Code` | `1084` |
+| `Client/NumeroTVA` | `FR12000000009` | `Client/Code` | `2201` |
+
+La première ligne est une **constante** : elle s'applique à tous les fichiers.
+Les deux suivantes ne s'appliquent qu'aux factures du client concerné. Une
+condition à moitié renseignée est signalée et la règle ignorée, plutôt
+qu'appliquée de travers.
+
+En ligne de commande : `--referentiel mon-fichier.xlsx`.
+
 ### Premier chargement
 
 Le navigateur télécharge ≈ 8 Mo (Python + lxml en WebAssembly) à la première
@@ -285,6 +348,7 @@ xsdfix/              le moteur, chargé tel quel par le navigateur
   corrector.py       moteur de correction (ordre, namespace, ajouts, valeurs)
   service.py         Session (un XSD, N fichiers) + rapport + ZIP
   flat_schema.py     remet les espaces de noms dans un XSD généré « à plat »
+  referentiel.py     contrôle des données face à un classeur Excel/CSV
   webapi.py          frontière Python ↔ navigateur (JSON / base64)
 cli.py               même moteur, en ligne de commande
 diagnostic.py        extrait la structure XSD/XML sans divulguer de données
