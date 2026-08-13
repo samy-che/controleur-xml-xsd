@@ -8,7 +8,9 @@ Corrections appliquees, dans l'ordre :
   5. nettoyage des espaces parasites autour des valeurs typees (option, activee).
 
 Regle de conduite : on ne fabrique jamais de donnee metier. Les elements ajoutes
-sont vides et signales comme « a completer » dans le rapport.
+sont vides et signales par un commentaire dans le fichier. Seules les valeurs
+explicitement fournies par l'utilisateur dans un referentiel sont ecrites, et
+elles laissent elles aussi une trace commentee (voir referentiel.py).
 """
 
 from __future__ import annotations
@@ -57,13 +59,14 @@ class Options:
     insert_missing: bool = False
     remove_unknown: bool = False
     comment_inserted: bool = True      # signaler chaque balise ajoutee
+    apply_referentiel: bool = True     # ecrire les valeurs du referentiel
 
     @classmethod
     def from_dict(cls, raw: Optional[Dict]) -> "Options":
         raw = raw or {}
         opts = cls()
         for key in ("reorder", "fix_namespace", "trim_values", "insert_missing",
-                    "remove_unknown", "comment_inserted"):
+                    "remove_unknown", "comment_inserted", "apply_referentiel"):
             if key in raw:
                 setattr(opts, key, bool(raw[key]))
         return opts

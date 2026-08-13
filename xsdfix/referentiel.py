@@ -13,13 +13,16 @@ Deux difficultes traitees ici :
    plusieurs emplacements aux valeurs differentes, on ne devine pas : on signale
    l'ambiguite et on liste les chemins candidats.
 
-2. **La bonne valeur depend souvent de la facture.** Une regle peut donc etre
-   conditionnee par une cle : « si <PartyIdentification/ID> vaut 1084, alors
-   <CompanyID> doit valoir FR55987654321 ». Sans cle, la regle vaut pour tous
-   les fichiers (constantes : votre TVA, la devise, le ProfileID).
+2. **La bonne valeur depend souvent de la facture.** Le classeur porte donc un
+   onglet par fichier : une regle qui y figure ne vaut que pour lui, et prime
+   sur l'onglet commun. Pour une regle durable, independante du nom de fichier,
+   les colonnes « Balise cle » / « Valeur cle » conditionnent une regle a la
+   valeur d'une autre balise (« si Client/Code vaut 1084, alors… »).
 
-Le controle SIGNALE, il ne corrige pas : reecrire une donnee metier reste une
-decision humaine.
+Les ecarts sont ecrits dans le fichier corrige, chacun signale par un
+commentaire rappelant l'ancienne valeur — sauf les regles ambigues, jamais
+appliquees : l'emplacement a corriger ne se devine pas. L'option
+`apply_referentiel=False` revient a un simple signalement.
 """
 
 from __future__ import annotations
@@ -375,15 +378,20 @@ class Ecart:
     ligne: int = 0
     ambigu: bool = False
     candidats: List[str] = field(default_factory=list)
+    applique: bool = False           # la valeur a effectivement ete remplacee
 
     def as_dict(self) -> Dict:
         return {"chemin": self.chemin, "actuel": self.actuel, "attendu": self.attendu,
                 "commentaire": self.commentaire, "ligne": self.ligne,
                 "ambigu": self.ambigu, "candidats": self.candidats,
-                "label": self.label}
+                "applique": self.applique, "label": self.label}
 
     @property
     def label(self) -> str:
+        if self.applique:
+            base = "%s : « %s » remplacé par « %s »." % (
+                self.chemin, self.actuel or "(vide)", self.attendu)
+            return base + (" (%s)" % self.commentaire if self.commentaire else "")
         if self.ambigu:
             return ("La règle ligne %d vise « %s », qui correspond à %d emplacements "
                     "portant des valeurs différentes. Précisez le chemin dans le "
@@ -436,10 +444,52 @@ def controler(racine, regles: Sequence[Regle], nom_fichier: str = "") -> List[Ec
     return ecarts
 
 
+def _commentaire_correction(avant: str, apres: str, motif: str) -> str:
+    """Texte accole a une valeur corrigee. « -- » est interdit dans un commentaire."""
+    texte = (" VALEUR CORRIGÉE PAR LE CONTRÔLEUR XML/XSD d'après le référentiel : "
+             "« %s » remplacé par « %s ».%s À vérifier. "
+             % (avant or "(vide)", apres, " %s." % motif if motif else ""))
+    return texte.replace("--", "- -")
+
+
+def appliquer(racine, regles: Sequence[Regle], nom_fichier: str = "") -> List[Ecart]:
+    """Ecrit les valeurs de reference dans le document et signale chaque
+    remplacement par un commentaire place juste avant la balise.
+
+    Les regles ambigues ne sont JAMAIS appliquees : on ne devine pas quel
+    emplacement corriger. Elles restent signalees pour decision humaine.
+    """
+    ecarts = controler(racine, regles, nom_fichier)
+    for ecart in ecarts:
+        if ecart.ambigu:
+            continue
+        cibles = trouver(racine, ecart.chemin)
+        if len(cibles) != 1:
+            continue                       # le chemin exact doit designer une balise
+        el = cibles[0]
+        avant = _texte(el)
+        el.text = ecart.attendu
+        commentaire = etree.Comment(
+            _commentaire_correction(avant, ecart.attendu, ecart.commentaire))
+        el.addprevious(commentaire)
+        commentaire.tail = el.tail if el.getprevious() is commentaire else commentaire.tail
+        # le commentaire reprend l'indentation de la balise qu'il precede
+        precedent = commentaire.getprevious()
+        blanc = (precedent.tail if precedent is not None
+                 else el.getparent().text if el.getparent() is not None else None)
+        commentaire.tail = blanc
+        ecart.applique = True
+    return ecarts
+
+
 # --------------------------------------------------------------------- modele
 
-ENTETES = ["Chemin", "Valeur actuelle", "Balise clé", "Valeur clé",
-           "Valeur attendue", "Commentaire"]
+# Le modele genere reste volontairement a quatre colonnes : les onglets par
+# facture expriment deja « cette valeur, pour ce fichier ». Les colonnes de
+# condition (« Balise cle » / « Valeur cle ») restent LUES si elles figurent
+# dans un classeur, pour qui veut une regle durable independante du nom de
+# fichier, mais elles n'encombrent plus le modele.
+ENTETES = ["Chemin", "Valeur actuelle", "Valeur attendue", "Commentaire"]
 
 
 def collecter_valeurs(racines: Sequence) -> List[Tuple[str, str, int]]:
@@ -573,9 +623,9 @@ def generer_modele(documents: Sequence) -> bytes:
     def bloc(valeurs, entete_commentaire=""):
         lignes = [ENTETES]
         if entete_commentaire:
-            lignes.append(["", "", "", "", "", entete_commentaire])
+            lignes.append(["", "", "", entete_commentaire])
         for chemin, valeur, nombre in valeurs:
-            lignes.append([chemin, valeur, "", "", "",
+            lignes.append([chemin, valeur, "",
                            "%d valeurs différentes selon les fichiers" % nombre
                            if nombre > 1 else ""])
         return lignes

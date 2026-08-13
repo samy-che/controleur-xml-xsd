@@ -840,22 +840,53 @@ class TestReferentiel(unittest.TestCase):
             "/Invoice/AccountingSupplierParty/Party/PartyTaxScheme/CompanyID")), 1)
         self.assertEqual(len(trouver(racine, "AccountingCustomerParty//CompanyID")), 1)
 
-    def test_le_fichier_n_est_jamais_modifie(self):
-        """Un écart de données se signale, il ne se corrige pas."""
-        xsd = HEAD + '''
-          <xs:element name="R"><xs:complexType><xs:sequence>
-            <xs:element name="A" type="xs:string"/>
-          </xs:sequence></xs:complexType></xs:element>
-        </xs:schema>'''
+    XSD_SIMPLE = HEAD + '''
+      <xs:element name="R"><xs:complexType><xs:sequence>
+        <xs:element name="A" type="xs:string"/>
+      </xs:sequence></xs:complexType></xs:element>
+    </xs:schema>'''
+
+    def _lancer(self, options):
         from xsdfix.referentiel import charger_regles
         regles, _ = charger_regles([["Chemin", "Valeur attendue"], ["A", "bonne"]])
-        report = analyze([InputFile("s.xsd", xsd.encode())],
-                         [InputFile("f.xml", b'<R xmlns="urn:t"><A>mauvaise</A></R>')],
-                         Options(), regles=regles)
-        result = report.results[0]
+        return analyze([InputFile("s.xsd", self.XSD_SIMPLE.encode())],
+                       [InputFile("f.xml", b'<R xmlns="urn:t"><A>mauvaise</A></R>')],
+                       options, regles=regles).results[0]
+
+    def test_valeur_corrigee_et_commentee(self):
+        """Un fichier conforme au XSD mais fautif sur les données doit tout de
+        même produire un corrigé, chaque valeur remplacée étant commentée."""
+        from xsdfix.corrector import Options as O
+        result = self._lancer(O(apply_referentiel=True))
+        self.assertEqual(result.status, STATUS_FIXED)
+        self.assertIsNotNone(result.corrected)
+        texte = result.corrected.decode()
+        self.assertIn("<A>bonne</A>", texte)
+        self.assertIn("VALEUR CORRIGÉE", texte)
+        self.assertIn("mauvaise", texte)          # l'ancienne valeur reste tracée
+        self.assertLess(texte.index("VALEUR CORRIGÉE"), texte.index("<A>bonne</A>"))
+        self.assertTrue(result.ecarts[0].applique)
+        self.assertTrue(any(c.kind == "valeur" for c in result.changes))
+
+    def test_mode_signalement_seul(self):
+        from xsdfix.corrector import Options as O
+        result = self._lancer(O(apply_referentiel=False))
         self.assertEqual(result.status, STATUS_VALID)      # conforme au XSD
         self.assertEqual(len(result.ecarts), 1)            # mais donnée non conforme
+        self.assertFalse(result.ecarts[0].applique)
         self.assertIsNone(result.corrected)                # rien n'a été réécrit
+
+    def test_regle_ambigue_jamais_appliquee(self):
+        """On ne devine pas quel emplacement corriger : l'ambiguïté reste signalée."""
+        from xsdfix.referentiel import appliquer, charger_regles
+        regles, _ = charger_regles([["Chemin", "Valeur attendue"],
+                                    ["CompanyID", "XXX"]])
+        racine = self._racine()
+        ecarts = appliquer(racine, regles, "f.xml")
+        self.assertTrue(ecarts[0].ambigu)
+        self.assertFalse(ecarts[0].applique)
+        from lxml import etree
+        self.assertNotIn(b"XXX", etree.tostring(racine))
 
     def test_lecture_xlsx_et_csv(self):
         from xsdfix.referentiel import generer_modele, lire_classeur

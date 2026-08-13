@@ -27,7 +27,7 @@ const STATUS_TEXT = {
 
 const CHANGE_LABEL = {
   order: "ordre", namespace: "espace de noms", insert: "ajout",
-  remove: "suppression", trim: "valeur",
+  remove: "suppression", trim: "valeur", valeur: "référentiel",
 };
 
 /* ------------------------------------------------------------------ moteur */
@@ -272,6 +272,7 @@ async function run() {
         trim_values: $("opt-trim").checked,
         insert_missing: $("opt-insert").checked,
         remove_unknown: $("opt-remove").checked,
+        apply_referentiel: $("opt-referentiel").checked,
       },
     })));
 
@@ -527,15 +528,20 @@ function buildCard(result) {
 
   if (result.ecarts && result.ecarts.length) {
     body.appendChild(block("Écarts avec le référentiel", result.ecarts.map((ecart) => {
-      const li = el("li", ecart.ambigu ? "err" : "left");
-      li.appendChild(el("span", "tag", ecart.ambigu ? "ambigu" : "donnée"));
+      const li = el("li", ecart.ambigu ? "err" : (ecart.applique ? "fix" : "left"));
+      li.appendChild(el("span", "tag",
+        ecart.ambigu ? "ambigu" : (ecart.applique ? "corrigé" : "donnée")));
       li.appendChild(document.createTextNode(ecart.label + " "));
       li.appendChild(el("span", "loc", "(ligne " + ecart.ligne + " du référentiel)"));
       return li;
     })));
-    body.appendChild(el("p", "meta",
-      "Ces écarts portent sur les données, pas sur la structure : ils ne sont jamais " +
-      "corrigés automatiquement. Le fichier reste tel quel sur ce point."));
+    const appliques = result.ecarts.filter((e) => e.applique).length;
+    body.appendChild(el("p", "meta", appliques
+      ? `${appliques} valeur(s) remplacée(s) dans le fichier corrigé, chacune signalée ` +
+        "par un commentaire rappelant l'ancienne valeur. Une règle ambiguë n'est " +
+        "jamais appliquée : l'emplacement à corriger ne se devine pas."
+      : "Ces écarts portent sur les données, pas sur la structure. Cochez « Appliquer " +
+        "les valeurs du référentiel » pour qu'ils soient corrigés."));
   }
 
   if (result.corrected) {

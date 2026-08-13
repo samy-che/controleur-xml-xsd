@@ -13,8 +13,8 @@ from typing import Dict, List, Optional, Tuple
 
 from lxml import etree
 
-from .corrector import Change, Options, correct, document_namespaces
-from .referentiel import Ecart, Regle, controler
+from .corrector import Change, Options, correct, document_namespaces, serialize
+from .referentiel import Ecart, Regle, appliquer, controler
 from .schema_model import SchemaSet, split_tag
 from .validator import (CAT_MISSING, CAT_ORDER, CAT_ROOT, CAT_UNEXPECTED,
                         ValidationError, Validator)
@@ -343,23 +343,48 @@ class Session:
             return result
 
         result.encoding = tree.docinfo.encoding or "UTF-8"
-        if self.regles:
-            # le referentiel porte sur les donnees, independamment du XSD :
-            # un fichier parfaitement valide peut contenir un mauvais numero
-            result.ecarts = controler(tree.getroot(), self.regles, item.name)
         root_qname = split_tag(tree.getroot().tag)
         namespaces = document_namespaces(tree.getroot())
         result.errors_before = _refine(self.validator.validate(tree), self.schema,
                                        root_qname, namespaces, tree)
-        if not result.errors_before:
+
+        # Le referentiel porte sur les DONNEES, independamment du XSD : un fichier
+        # parfaitement valide peut porter un mauvais numero de TVA. Il faut donc
+        # produire un fichier corrige meme quand la structure ne pose probleme.
+        ecrire_valeurs = bool(self.regles) and self.options.apply_referentiel
+        if not result.errors_before and not ecrire_valeurs:
             result.status = STATUS_VALID
+            if self.regles:
+                result.ecarts = controler(tree.getroot(), self.regles, item.name)
             return result
 
-        try:
-            corrected, changes = correct(item.data, self.schema, self.validator, self.options)
-        except Exception as exc:  # une correction ne doit jamais faire tomber le lot
-            result.status = STATUS_FAILED
-            result.fatal = "Correction impossible : %s" % exc
+        corrected, changes = item.data, []
+        if result.errors_before:
+            try:
+                corrected, changes = correct(item.data, self.schema,
+                                             self.validator, self.options)
+            except Exception as exc:  # une correction ne doit jamais faire tomber le lot
+                result.status = STATUS_FAILED
+                result.fatal = "Correction impossible : %s" % exc
+                return result
+
+        if ecrire_valeurs:
+            arbre = etree.fromstring(corrected, self._parser).getroottree()
+            result.ecarts = appliquer(arbre.getroot(), self.regles, item.name)
+            appliques = [e for e in result.ecarts if e.applique]
+            if appliques:
+                corrected = serialize(arbre, result.encoding)
+                for ecart in appliques:
+                    changes.append(Change(
+                        "valeur", ecart.chemin,
+                        "valeur du référentiel appliquée : « %s » → « %s », "
+                        "signalée par un commentaire dans le fichier"
+                        % (ecart.actuel or "(vide)", ecart.attendu)))
+        elif self.regles:
+            result.ecarts = controler(tree.getroot(), self.regles, item.name)
+
+        if not result.errors_before and not changes:
+            result.status = STATUS_VALID
             return result
 
         result.changes = changes

@@ -177,9 +177,23 @@ Le XSD contrôle la **structure** : quelles balises, dans quel ordre, de quel
 type. Il ne saura jamais qu'un numéro de TVA doit valoir `3145` et non `11234`.
 Cette source de vérité-là se fournit sous forme de classeur **Excel ou CSV**.
 
-Les écarts sont **signalés, jamais corrigés** : réécrire une donnée métier reste
-une décision humaine. Un fichier peut donc être « conforme » au XSD et présenter
-des écarts de données.
+Les valeurs attendues sont **écrites dans le fichier corrigé**, chacune précédée
+d'un commentaire rappelant l'ancienne valeur :
+
+```xml
+<Vendeur>
+  <!-- VALEUR CORRIGÉE PAR LE CONTRÔLEUR XML/XSD d'après le référentiel :
+       « 11234 » remplacé par « 3145 ». TVA de notre société. À vérifier. -->
+  <TVA>3145</TVA>
+</Vendeur>
+```
+
+Un fichier peut donc être parfaitement conforme au XSD et produire quand même un
+corrigé, parce que ses **données** étaient fausses. Décochez *Appliquer les
+valeurs du référentiel* pour vous en tenir au signalement.
+
+Une règle **ambiguë n'est jamais appliquée** : si elle vise plusieurs
+emplacements, l'endroit à corriger ne se devine pas — elle reste signalée.
 
 **Le plus simple : laisser l'application produire le modèle.** Déposez vos XML,
 cliquez *Générer le modèle Excel* : vous obtenez un classeur listant chaque
@@ -213,12 +227,17 @@ d'organiser ses règles par thème plutôt que par facture.
 | Colonne | Rôle |
 |---|---|
 | **Chemin** | quelle balise contrôler (voir ci-dessous) |
-| **Valeur attendue** | la valeur de référence |
-| **Balise clé** *(option)* | balise dont dépend la règle |
-| **Valeur clé** *(option)* | valeur que doit avoir cette balise pour que la règle s'applique |
-| **Commentaire** | libre, repris dans le rapport |
+| **Valeur actuelle** | ce que contient le fichier — pour information |
+| **Valeur attendue** | la valeur de référence ; laissez vide pour ne rien contrôler |
+| **Commentaire** | libre, repris dans le rapport et dans le XML corrigé |
 
 Les colonnes sont reconnues **par leur intitulé**, quel que soit leur ordre.
+
+Deux colonnes facultatives, absentes du modèle car les onglets par facture les
+rendent inutiles dans le cas courant : **Balise clé** et **Valeur clé**
+conditionnent une règle à la valeur d'une autre balise (« si `Client/Code` vaut
+`1084`, alors… »). Elles restent lues si votre classeur en contient, et sont
+utiles pour une règle durable qui ne dépend pas du nom de fichier.
 
 #### Une même balise à deux endroits
 
