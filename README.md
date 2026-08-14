@@ -208,10 +208,14 @@ Une facture UBL peut porter une pièce jointe — un PDF encodé en base64 dans
 caractères. Or Excel plafonne une cellule à **32 767 caractères** et « répare »
 silencieusement le fichier au-delà.
 
-La colonne « Valeur actuelle » n'affiche donc qu'un début de valeur passé
-300 caractères, et la colonne « Commentaire » précise la longueur réelle. Le
-classeur reste léger, et la comparaison porte évidemment sur la valeur entière
-du fichier, pas sur l'aperçu.
+La colonne « Valeur actuelle » est donc écourtée au-delà de **2 000
+caractères**, la colonne « Commentaire » précisant alors la longueur réelle. Ce
+seuil laisse passer en entier une note, une adresse ou un libellé ; seules les
+pièces jointes sont concernées. Pour l'ajuster, `LIMITE_APERCU` en tête de
+`xsdfix/referentiel.py`.
+
+La comparaison porte évidemment sur la valeur entière du fichier, pas sur
+l'aperçu : une règle reste exacte même sur une balise écourtée à l'affichage.
 
 #### Un onglet par facture
 

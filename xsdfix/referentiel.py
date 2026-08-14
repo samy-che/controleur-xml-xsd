@@ -514,9 +514,11 @@ def collecter_valeurs(racines: Sequence) -> List[Tuple[str, str, int]]:
 # sans prevenir. Une facture UBL peut porter un PDF encode en base64 dans
 # <cbc:EmbeddedDocumentBinaryObject> : largement de quoi depasser.
 LIMITE_CELLULE = 32767
-# Au-dela de quelques lignes, la valeur actuelle n'aide plus a remplir la
-# colonne « valeur attendue » : on n'en montre qu'un debut.
-LIMITE_APERCU = 300
+# La valeur actuelle sert a decider quoi mettre dans « valeur attendue » : elle
+# doit rester lisible en entier dans le cas courant. 2 000 caracteres couvrent
+# largement une note, une adresse ou un libelle ; seules les pieces jointes
+# encodees en base64 (des centaines de milliers de caracteres) sont ecourtees.
+LIMITE_APERCU = 2000
 
 # Caracteres interdits par XML 1.0, quel que soit l'echappement.
 _INVALIDES_XML = re.compile(
