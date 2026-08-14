@@ -221,59 +221,22 @@ l'aperçu : une règle reste exacte même sur une balise écourtée à l'afficha
 
 Deux factures n'ont pas forcément les mêmes balises : un onglet unique
 mélangerait leurs structures et masquerait ce qui est propre à chacune. Le
-classeur généré contient donc :
+classeur généré contient donc **un onglet par facture**, nommé d'après le
+fichier, avec ses balises à elle.
 
-- un onglet **« Toutes les factures »** (dès qu'il y en a plusieurs), listant les
-  balises présentes dans **tous** les fichiers. C'est là que se mettent les
-  constantes : votre numéro de TVA, la devise, le ProfileID — inutile de les
-  recopier partout ;
-- puis **un onglet par facture**, nommé d'après le fichier, avec ses balises à
-  elle.
+Une règle écrite sur un onglet **ne s'applique qu'à la facture correspondante**.
+Le rapprochement se fait sur le nom du fichier sans son extension ; Excel
+limitant les noms d'onglet à 31 caractères, les noms longs sont tronqués — des
+deux côtés de la même façon, la correspondance reste donc valable.
 
-Une règle écrite sur l'onglet d'une facture **ne s'applique qu'à cette facture**.
-Et si la même balise est réglée aux deux endroits, **le particulier l'emporte sur
-le général** : l'onglet de la facture fait exception à la règle commune.
+Un onglet dont le nom ne désigne aucun fichier du lot **ne s'applique à rien**.
+C'est presque toujours un onglet resté d'un lot précédent, et l'appliquer à tout
+serait une mauvaise surprise.
 
-Le rapprochement se fait sur le nom du fichier sans son extension. Excel limitant
-les noms d'onglet à 31 caractères, les noms longs sont tronqués — des deux côtés
-de la même façon, la correspondance reste donc valable. Un onglet dont le nom ne
-correspond à aucun fichier déposé s'applique à tous, ce qui permet aussi
-d'organiser ses règles par thème plutôt que par facture.
-
-| Colonne | Rôle |
-|---|---|
-| **Chemin** | quelle balise contrôler (voir ci-dessous) |
-| **Valeur actuelle** | ce que contient le fichier — pour information |
-| **Valeur attendue** | la valeur de référence ; laissez vide pour ne rien contrôler |
-| **Commentaire** | libre, repris dans le rapport et dans le XML corrigé |
-
-Les colonnes sont reconnues **par leur intitulé**, quel que soit leur ordre.
-
-Deux colonnes facultatives, absentes du modèle car les onglets par facture les
-rendent inutiles dans le cas courant : **Balise clé** et **Valeur clé**
-conditionnent une règle à la valeur d'une autre balise (« si `Client/Code` vaut
-`1084`, alors… »). Elles restent lues si votre classeur en contient, et sont
-utiles pour une règle durable qui ne dépend pas du nom de fichier.
-
-#### Une même balise à deux endroits
-
-C'est le cas courant : `CompanyID` est le numéro de TVA du vendeur sous
-`AccountingSupplierParty` et celui du client sous `AccountingCustomerParty`. Le
-nom seul ne suffit donc pas à désigner un emplacement. Trois écritures sont
-acceptées, de la plus souple à la plus précise :
-
-| Écriture | Exemple |
-|---|---|
-| Nom seul | `DocumentCurrencyCode` |
-| Chemin abrégé | `AccountingSupplierParty//CompanyID` |
-| Chemin exact | `/Invoice/cac:AccountingSupplierParty/cac:Party/cac:PartyTaxScheme/cbc:CompanyID` |
-
-Les préfixes d'espace de noms sont ignorés : écrivez `cbc:ID` ou `ID`, c'est
-identique.
-
-Si une règle vise **plusieurs emplacements portant des valeurs différentes**,
-l'application **refuse de deviner** : elle signale l'ambiguïté et affiche les
-chemins candidats, à recopier dans le classeur pour lever le doute.
+Pour une règle qui doit valoir pour **tout un lot** sans dépendre des noms de
+fichiers — votre propre numéro de TVA, la devise — ajoutez vous-même un onglet
+nommé `Toutes les factures`, `Communes` ou `Tous` : ces noms sont reconnus comme
+globaux. Une règle propre à une facture l'emporte alors sur la règle globale.
 
 #### Une valeur qui dépend de la facture
 

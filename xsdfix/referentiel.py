@@ -151,6 +151,12 @@ def lire_classeur(data: bytes, nom: str) -> List[Tuple[str, List[List[str]]]]:
 
 
 FEUILLE_COMMUNE = "Toutes les factures"
+# Noms d'onglet reserves, dont les regles valent pour tous les fichiers du lot.
+# Le modele genere n'en cree plus : un onglet par facture suffit dans l'usage
+# courant. Ces noms restent reconnus pour qui veut poser des regles durables,
+# qui survivent au changement des noms de fichiers d'un lot a l'autre.
+FEUILLES_GLOBALES = {"toutes les factures", "toutes", "tous", "commun", "communes",
+                     "general", "*"}
 _INTERDITS_FEUILLE = re.compile(r"[:\\/?*\[\]]")
 
 
@@ -178,10 +184,22 @@ class Regle:
     def conditionnelle(self) -> bool:
         return bool(self.cle_chemin and self.cle_valeur)
 
+    @property
+    def globale(self) -> bool:
+        """Une regle sans onglet (CSV), ou posee sur un onglet au nom reserve,
+        vaut pour tous les fichiers."""
+        return not self.feuille or _normaliser(self.feuille) in FEUILLES_GLOBALES
+
     def concerne(self, nom_fichier: str) -> bool:
         """Une regle d'un onglet nomme d'apres une facture ne vaut que pour elle.
-        Les autres onglets (dont « Toutes les factures ») valent pour tous."""
-        if not self.feuille or self.feuille == FEUILLE_COMMUNE:
+
+        Un onglet dont le nom ne designe aucun fichier du lot ne s'applique a
+        rien : c'est presque toujours un onglet laisse la d'un lot precedent, et
+        l'appliquer a tout serait une surprise desagreable. Pour une regle
+        volontairement globale, nommer l'onglet « Toutes les factures »,
+        « Communes » ou « Tous ».
+        """
+        if self.globale:
             return True
         return self.feuille == nom_feuille(nom_fichier or "")
 
@@ -415,12 +433,10 @@ def controler(racine, regles: Sequence[Regle], nom_fichier: str = "") -> List[Ec
     sur le general, c'est ce qu'on attend d'un referentiel.
     """
     applicables = [r for r in regles if r.concerne(nom_fichier)]
-    specifiques = {r.cible for r in applicables if r.feuille
-                   and r.feuille != FEUILLE_COMMUNE}
+    specifiques = {r.cible for r in applicables if not r.globale}
     ecarts: List[Ecart] = []
     for regle in applicables:
-        if regle.cible in specifiques and (
-                not regle.feuille or regle.feuille == FEUILLE_COMMUNE):
+        if regle.cible in specifiques and regle.globale:
             continue                       # une regle propre au fichier prend le relais
         if regle.conditionnelle:
             porteurs = trouver(racine, regle.cle_chemin)
@@ -630,9 +646,9 @@ def generer_modele(documents: Sequence) -> bytes:
     melangerait leurs structures et masquerait ce qui est propre a chacune. Une
     regle inscrite sur l'onglet d'une facture ne vaudra donc que pour elle.
 
-    Quand il y a plusieurs fichiers, un premier onglet « Toutes les factures »
-    regroupe les balises presentes partout : c'est la que se mettent les
-    constantes (votre TVA, la devise), pour ne pas les recopier partout.
+    Pour une regle qui doit valoir pour tout un lot sans dependre des noms de
+    fichiers, ajouter soi-meme un onglet nomme « Toutes les factures »,
+    « Communes » ou « Tous » : ces noms sont reconnus comme globaux.
 
     `documents` : liste de (nom de fichier, racine) — ou de racines seules.
     """
@@ -660,18 +676,7 @@ def generer_modele(documents: Sequence) -> bytes:
         return lignes
 
     feuilles: List[Tuple[str, List[List[str]]]] = []
-    if len(paires) > 1:
-        communs = None
-        for _, racine in paires:
-            chemins = {c for c, _, _ in collecter_valeurs([racine])}
-            communs = chemins if communs is None else (communs & chemins)
-        valeurs = [v for v in collecter_valeurs([r for _, r in paires])
-                   if v[0] in (communs or set())]
-        feuilles.append((FEUILLE_COMMUNE, bloc(
-            valeurs, "Balises présentes dans les %d fichiers. Les règles écrites ici "
-                     "s'appliquent à tous." % len(paires))))
-
-    utilises = {FEUILLE_COMMUNE}
+    utilises = set()
     for index, (nom, racine) in enumerate(paires, start=1):
         onglet = nom_feuille(nom) if nom else "Facture %d" % index
         base, compteur = onglet, 2
@@ -680,7 +685,7 @@ def generer_modele(documents: Sequence) -> bytes:
             onglet = base[:31 - len(suffixe)] + suffixe
             compteur += 1
         utilises.add(onglet)
-        commentaire = ("Règles propres à ce fichier ; elles priment sur l'onglet commun."
+        commentaire = ("Les règles écrites ici ne concernent que ce fichier."
                        if len(paires) > 1 else "")
         feuilles.append((onglet, bloc(collecter_valeurs([racine]), commentaire)))
 

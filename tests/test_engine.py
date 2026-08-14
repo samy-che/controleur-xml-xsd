@@ -922,8 +922,8 @@ class TestReferentielMultiOnglets(unittest.TestCase):
         a, b = self._racines()
         classeur = generer_modele([("facture-001.xml", a), ("facture-002.xml", b)])
         feuilles = dict(lire_classeur(classeur, "m.xlsx"))
-        self.assertEqual(list(feuilles),
-                         ["Toutes les factures", "facture-001", "facture-002"])
+        # un onglet par fichier, et rien d'autre
+        self.assertEqual(list(feuilles), ["facture-001", "facture-002"])
         # chaque onglet porte les balises de SA facture
         chemins_1 = {l[0] for l in feuilles["facture-001"][1:] if l and l[0]}
         chemins_2 = {l[0] for l in feuilles["facture-002"][1:] if l and l[0]}
@@ -931,10 +931,25 @@ class TestReferentielMultiOnglets(unittest.TestCase):
         self.assertNotIn("/Facture/Client/TVA", chemins_2)
         self.assertIn("/Facture/Remise", chemins_2)
         self.assertNotIn("/Facture/Remise", chemins_1)
-        # l'onglet commun ne garde que ce qui existe partout
-        communs = {l[0] for l in feuilles["Toutes les factures"][1:] if l and l[0]}
-        self.assertIn("/Facture/Vendeur/TVA", communs)
-        self.assertNotIn("/Facture/Remise", communs)
+
+    def test_onglet_inconnu_ne_s_applique_a_rien(self):
+        """Un onglet resté d'un lot précédent ne doit pas s'appliquer au hasard."""
+        from xsdfix.referentiel import charger_regles, controler
+        regles, _ = charger_regles([
+            ("facture-du-mois-dernier", [["Chemin", "Valeur attendue"],
+                                         ["Vendeur/TVA", "3145"]])])
+        a, _ = self._racines()
+        self.assertEqual(controler(a, regles, "facture-001.xml"), [])
+
+    def test_onglet_global_explicite(self):
+        """Pour une règle qui vaut pour tout le lot, un nom d'onglet réservé."""
+        from xsdfix.referentiel import charger_regles, controler
+        for nom in ("Toutes les factures", "Communes", "TOUS"):
+            regles, _ = charger_regles([
+                (nom, [["Chemin", "Valeur attendue"], ["Vendeur/TVA", "3145"]])])
+            a, b = self._racines()
+            self.assertEqual(len(controler(a, regles, "facture-001.xml")), 1, nom)
+            self.assertEqual(len(controler(b, regles, "facture-002.xml")), 1, nom)
 
     def test_regle_d_onglet_limitee_a_sa_facture(self):
         from xsdfix.referentiel import charger_regles, controler
