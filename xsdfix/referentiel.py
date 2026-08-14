@@ -510,8 +510,29 @@ def collecter_valeurs(racines: Sequence) -> List[Tuple[str, str, int]]:
     return sorted(lignes)
 
 
+# Excel refuse au-dela de 32 767 caracteres par cellule et repare le fichier
+# sans prevenir. Une facture UBL peut porter un PDF encode en base64 dans
+# <cbc:EmbeddedDocumentBinaryObject> : largement de quoi depasser.
+LIMITE_CELLULE = 32767
+# Au-dela de quelques lignes, la valeur actuelle n'aide plus a remplir la
+# colonne « valeur attendue » : on n'en montre qu'un debut.
+LIMITE_APERCU = 300
+
+# Caracteres interdits par XML 1.0, quel que soit l'echappement.
+_INVALIDES_XML = re.compile(
+    "[^\u0009\u000A\u000D\u0020-\uD7FF\uE000-\uFFFD]")
+
+
+def _cellule(texte: str, limite: int = LIMITE_CELLULE) -> str:
+    """Ramene une valeur a ce qu'un classeur peut contenir."""
+    propre = _INVALIDES_XML.sub("", str(texte or ""))
+    if len(propre) > limite:
+        propre = propre[:limite - 1] + "…"
+    return propre
+
+
 def _echapper(texte: str) -> str:
-    return (str(texte).replace("&", "&amp;").replace("<", "&lt;")
+    return (_cellule(texte).replace("&", "&amp;").replace("<", "&lt;")
             .replace(">", "&gt;").replace('"', "&quot;"))
 
 
@@ -625,9 +646,15 @@ def generer_modele(documents: Sequence) -> bytes:
         if entete_commentaire:
             lignes.append(["", "", "", entete_commentaire])
         for chemin, valeur, nombre in valeurs:
-            lignes.append([chemin, valeur, "",
-                           "%d valeurs différentes selon les fichiers" % nombre
-                           if nombre > 1 else ""])
+            notes = []
+            if nombre > 1:
+                notes.append("%d valeurs différentes selon les fichiers" % nombre)
+            apercu = valeur
+            if len(valeur) > LIMITE_APERCU:
+                apercu = valeur[:LIMITE_APERCU] + "…"
+                notes.append("valeur tronquée pour l'affichage (%d caractères dans le "
+                             "fichier)" % len(valeur))
+            lignes.append([chemin, apercu, "", " ; ".join(notes)])
         return lignes
 
     feuilles: List[Tuple[str, List[List[str]]]] = []

@@ -201,6 +201,18 @@ balise, son chemin complet et sa valeur actuelle. Vous ne remplissez que la
 colonne « Valeur attendue », et vous redéposez le fichier. Aucun chemin à écrire
 à la main.
 
+#### Valeurs volumineuses
+
+Une facture UBL peut porter une pièce jointe — un PDF encodé en base64 dans
+`cbc:EmbeddedDocumentBinaryObject` — de plusieurs centaines de milliers de
+caractères. Or Excel plafonne une cellule à **32 767 caractères** et « répare »
+silencieusement le fichier au-delà.
+
+La colonne « Valeur actuelle » n'affiche donc qu'un début de valeur passé
+300 caractères, et la colonne « Commentaire » précise la longueur réelle. Le
+classeur reste léger, et la comparaison porte évidemment sur la valeur entière
+du fichier, pas sur l'aperçu.
+
 #### Un onglet par facture
 
 Deux factures n'ont pas forcément les mêmes balises : un onglet unique

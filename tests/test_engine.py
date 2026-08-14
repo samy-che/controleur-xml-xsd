@@ -967,6 +967,38 @@ class TestReferentielMultiOnglets(unittest.TestCase):
         self.assertEqual(len(ecarts), 1, [e.label for e in ecarts])
         self.assertEqual(ecarts[0].attendu, "9999")
 
+    def test_valeur_trop_longue_pour_excel(self):
+        """Excel plafonne une cellule à 32 767 caractères et « répare » le
+        fichier au-delà. Une facture UBL peut porter un PDF en base64 :
+        largement de quoi dépasser."""
+        import io
+        import re
+        import zipfile
+        from lxml import etree
+        from xsdfix.referentiel import LIMITE_CELLULE, generer_modele
+
+        enorme = "A" * 400000
+        racine = etree.fromstring(
+            ('<F xmlns="urn:t"><Piece>%s</Piece><ID>FA-1</ID></F>' % enorme).encode())
+        data = generer_modele([("facture.xml", racine)])
+
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            feuille = archive.read("xl/worksheets/sheet1.xml").decode()
+        cellules = re.findall(r"<t[^>]*>(.*?)</t>", feuille, re.S)
+        self.assertTrue(cellules)
+        self.assertLessEqual(max(len(c) for c in cellules), LIMITE_CELLULE)
+        # la troncature est signalée, pour ne pas faire croire à une valeur courte
+        self.assertIn("valeur tronquée pour l&#39;affichage"
+                      if "&#39;" in feuille else "valeur tronquée", feuille)
+        # le classeur reste léger : on n'embarque pas la pièce jointe
+        self.assertLess(len(data), 50000, "le base64 ne doit pas gonfler le classeur")
+
+    def test_caracteres_interdits_par_xml(self):
+        """Un caractère de contrôle rendrait la feuille illisible."""
+        from xsdfix.referentiel import _cellule
+        self.assertEqual(_cellule("a\x0bb\x1fc"), "abc")
+        self.assertEqual(_cellule("a\tb\nc"), "a\tb\nc")   # ceux-là sont licites
+
     def test_nom_d_onglet_tronque_et_rapproche(self):
         """Excel limite les onglets à 31 caractères : le rapprochement doit se
         faire sur le nom tronqué, sinon la règle ne retrouverait pas son fichier."""
