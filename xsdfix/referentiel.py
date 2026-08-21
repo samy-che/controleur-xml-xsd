@@ -160,6 +160,17 @@ FEUILLES_GLOBALES = {"toutes les factures", "toutes", "tous", "commun", "commune
 _INTERDITS_FEUILLE = re.compile(r"[:\\/?*\[\]]")
 
 
+def _meme_fichier(a: str, b: str) -> bool:
+    """Rapproche deux noms de fichier : chemin et casse ignores, extension
+    facultative — l'utilisateur peut avoir saisi « facture-001 » tout court."""
+    def net(nom):
+        base = (nom or "").replace("\\", "/").split("/")[-1].strip().lower()
+        return base, re.sub(r"\.[^.]*$", "", base)
+    base_a, sans_a = net(a)
+    base_b, sans_b = net(b)
+    return base_a == base_b or sans_a == sans_b
+
+
 def nom_feuille(nom_fichier: str) -> str:
     """Nom d'onglet deduit d'un nom de fichier : Excel limite a 31 caracteres et
     interdit  : \\ / ? * [ ]  . La meme fonction sert a generer et a rapprocher."""
@@ -179,6 +190,7 @@ class Regle:
     commentaire: str = ""
     ligne: int = 0                   # ligne du classeur, pour les messages
     feuille: str = ""                # onglet d'origine : rattache la regle a un fichier
+    fichier: str = ""                # nom de fichier porte par la ligne (tableau)
 
     @property
     def conditionnelle(self) -> bool:
@@ -188,6 +200,8 @@ class Regle:
     def globale(self) -> bool:
         """Une regle sans onglet (CSV), ou posee sur un onglet au nom reserve,
         vaut pour tous les fichiers."""
+        if self.fichier:
+            return _normaliser(self.fichier) in FEUILLES_GLOBALES
         return not self.feuille or _normaliser(self.feuille) in FEUILLES_GLOBALES
 
     def concerne(self, nom_fichier: str) -> bool:
@@ -201,6 +215,10 @@ class Regle:
         """
         if self.globale:
             return True
+        if self.fichier:
+            # disposition en tableau : la ligne porte le nom complet du fichier,
+            # sans la troncature a 31 caracteres imposee aux onglets
+            return _meme_fichier(self.fichier, nom_fichier or "")
         return self.feuille == nom_feuille(nom_fichier or "")
 
 
@@ -263,12 +281,64 @@ def charger_regles(feuilles) -> Tuple[List[Regle], List[str]]:
     return regles, problemes
 
 
+def _est_tableau(ligne: Sequence[str]) -> bool:
+    """Reconnait l'en-tete d'un tableau « une ligne par facture ».
+
+    Signature : une premiere colonne qui nomme le fichier, puis des chemins.
+    """
+    if len(ligne) < 2:
+        return False
+    if _normaliser(ligne[0]) not in _ALIAS_FICHIER:
+        return False
+    return any("/" in (cellule or "") for cellule in ligne[1:])
+
+
+def _charger_tableau(lignes: Sequence[Sequence[str]],
+                     feuille: str = "") -> Tuple[List[Regle], List[str]]:
+    """Lit la disposition en tableau : une ligne par facture, une colonne par
+    chemin, la valeur attendue directement dans la cellule."""
+    entete = lignes[0]
+    chemins = [(index, (cellule or "").strip())
+               for index, cellule in enumerate(entete[1:], start=1)
+               if (cellule or "").strip()]
+    regles: List[Regle] = []
+    problemes: List[str] = []
+
+    for numero, ligne in enumerate(lignes[1:], start=2):
+        if not ligne:
+            continue
+        fichier = (ligne[0] or "").strip()
+        if not fichier:
+            continue
+        vues = set()
+        for index, chemin in chemins:
+            if index >= len(ligne):
+                continue
+            valeur = (ligne[index] or "").strip()
+            if not valeur:
+                continue                   # cellule vide : aucune règle
+            if chemin in vues:
+                problemes.append("Ligne %d : la colonne « %s » apparaît deux fois ; "
+                                 "seule la première est retenue." % (numero, chemin))
+                continue
+            vues.add(chemin)
+            regles.append(Regle(cible=chemin, attendu=valeur, ligne=numero,
+                                feuille=feuille, fichier=fichier))
+    return regles, problemes
+
+
 def _charger_feuille(lignes: Sequence[Sequence[str]],
                      feuille: str = "") -> Tuple[List[Regle], List[str]]:
     """Reconnait les colonnes par leur intitule, quel que soit leur ordre."""
     problemes: List[str] = []
     if not lignes:
         return [], ["Le fichier de référence est vide."]
+
+    # disposition en tableau : détectée sur les premières lignes non vides
+    for ligne in lignes[:5]:
+        if _est_tableau(ligne):
+            debut = list(lignes).index(list(ligne)) if ligne in lignes else 0
+            return _charger_tableau(lignes[debut:], feuille)
 
     entete: Optional[Dict[str, int]] = None
     depart = 0
@@ -327,38 +397,77 @@ def _local(tag) -> str:
     return tag.split("}", 1)[1] if "}" in tag else tag
 
 
-def chemin_de(el) -> str:
-    """Chemin lisible d'un element, sans prefixe d'espace de noms."""
+_RE_INDEX = re.compile(r"^(.*?)\[(\d+)\]$")
+
+
+def _rang(el) -> Optional[int]:
+    """Position d'un element parmi ses freres de meme nom, s'ils sont plusieurs.
+
+    Sans cela, deux <cbc:Note> partageraient le meme chemin — donc la meme
+    colonne du tableau, et la meme regle.
+    """
+    parent = el.getparent()
+    if parent is None:
+        return None
+    memes = [c for c in parent
+             if isinstance(c.tag, str) and _local(c.tag) == _local(el.tag)]
+    if len(memes) < 2:
+        return None
+    return memes.index(el) + 1
+
+
+def _segments(el) -> List[Tuple[str, Optional[int]]]:
+    """Chemin d'un element sous forme de (nom, rang) de la racine jusqu'a lui."""
     morceaux = []
     noeud = el
     while noeud is not None and isinstance(noeud.tag, str):
-        morceaux.append(_local(noeud.tag))
+        morceaux.append((_local(noeud.tag), _rang(noeud)))
         noeud = noeud.getparent()
-    return "/" + "/".join(reversed(morceaux))
+    morceaux.reverse()
+    return morceaux
 
 
-def _motif(expression: str) -> Tuple[List[str], bool]:
-    """Transforme « A//B/c:C » en (['A', '**', 'B', 'C'], ancre?)."""
+def chemin_de(el) -> str:
+    """Chemin lisible d'un element, sans prefixe d'espace de noms.
+
+    Les occurrences repetees portent leur rang : /Invoice/Note[2].
+    """
+    return "/" + "/".join("%s[%d]" % (nom, rang) if rang else nom
+                          for nom, rang in _segments(el))
+
+
+def _motif(expression: str) -> Tuple[List[Tuple[str, Optional[int]]], bool]:
+    """Transforme « A//B[2]/c:C » en ([(A,None), (**,None), (B,2), (C,None)], ancre?).
+
+    Un jeton sans rang correspond a toutes les occurrences ; avec rang, a une seule.
+    """
     expression = (expression or "").strip()
     ancre = expression.startswith("/")
     brut = expression.replace("//", "/" + ANY_DEPTH + "/")
-    jetons = [j.strip() for j in brut.split("/")]
     motif = []
-    for jeton in jetons:
+    for jeton in (j.strip() for j in brut.split("/")):
         if not jeton:
             continue
-        motif.append(jeton if jeton == ANY_DEPTH else jeton.split(":")[-1])
+        if jeton == ANY_DEPTH:
+            motif.append((ANY_DEPTH, None))
+            continue
+        rang = None
+        trouve = _RE_INDEX.match(jeton)
+        if trouve:
+            jeton, rang = trouve.group(1).strip(), int(trouve.group(2))
+        motif.append((jeton.split(":")[-1], rang))
     return motif, ancre
 
 
-def _correspond(chemin: List[str], motif: List[str], i: int = 0, j: int = 0) -> bool:
+def _correspond(chemin, motif, i: int = 0, j: int = 0) -> bool:
     """Le motif doit se terminer exactement sur l'element vise."""
     if j == len(motif):
         return i == len(chemin)
-    if motif[j] == ANY_DEPTH:
+    nom, rang = motif[j]
+    if nom == ANY_DEPTH:
         return any(_correspond(chemin, motif, k, j + 1)
                    for k in range(i, len(chemin) + 1))
-    if i < len(chemin) and chemin[i] == motif[j]:
+    if i < len(chemin) and chemin[i][0] == nom and (rang is None or chemin[i][1] == rang):
         return _correspond(chemin, motif, i + 1, j + 1)
     return False
 
@@ -369,20 +478,9 @@ def trouver(racine, expression: str) -> List:
     if not motif:
         return []
     if not ancre:
-        motif = [ANY_DEPTH] + motif
-    resultats = []
-    for el in racine.iter():
-        if not isinstance(el.tag, str):
-            continue
-        chemin = []
-        noeud = el
-        while noeud is not None and isinstance(noeud.tag, str):
-            chemin.append(_local(noeud.tag))
-            noeud = noeud.getparent()
-        chemin.reverse()
-        if _correspond(chemin, motif):
-            resultats.append(el)
-    return resultats
+        motif = [(ANY_DEPTH, None)] + motif
+    return [el for el in racine.iter()
+            if isinstance(el.tag, str) and _correspond(_segments(el), motif)]
 
 
 # --------------------------------------------------------------------- controle
@@ -506,6 +604,40 @@ def appliquer(racine, regles: Sequence[Regle], nom_fichier: str = "") -> List[Ec
 # dans un classeur, pour qui veut une regle durable independante du nom de
 # fichier, mais elles n'encombrent plus le modele.
 ENTETES = ["Chemin", "Valeur actuelle", "Valeur attendue", "Commentaire"]
+
+
+ENTETE_FICHIER = "Facture"
+# intitules acceptes pour la premiere colonne du tableau
+_ALIAS_FICHIER = ("facture", "fichier", "nom du fichier", "nom de fichier",
+                  "nom", "invoice", "file", "filename")
+# Un tableau trop large devient inutilisable, et Excel plafonne a 16 384 colonnes.
+LIMITE_COLONNES = 1000
+
+
+def valeurs_par_fichier(documents: Sequence) -> Tuple[List[str], Dict[str, Dict[str, str]]]:
+    """Prepare la matrice : colonnes (chemins) et valeurs de chaque fichier.
+
+    Les colonnes suivent l'ordre de premiere apparition dans les documents, ce
+    qui garde le tableau lisible : on y retrouve l'ordre de la facture.
+    """
+    colonnes: List[str] = []
+    vues = set()
+    par_fichier: Dict[str, Dict[str, str]] = {}
+    for nom, racine in documents:
+        valeurs: Dict[str, str] = {}
+        for el in racine.iter():
+            if not isinstance(el.tag, str) or len(el):
+                continue
+            texte = _texte(el)
+            if not texte:
+                continue
+            chemin = chemin_de(el)
+            valeurs[chemin] = texte
+            if chemin not in vues:
+                vues.add(chemin)
+                colonnes.append(chemin)
+        par_fichier[nom] = valeurs
+    return colonnes[:LIMITE_COLONNES], par_fichier
 
 
 def collecter_valeurs(racines: Sequence) -> List[Tuple[str, str, int]]:
@@ -640,53 +772,27 @@ def _ecrire_classeur(feuilles: Sequence[Tuple[str, Sequence[Sequence[str]]]]) ->
 
 
 def generer_modele(documents: Sequence) -> bytes:
-    """Produit un .xlsx pret a remplir, **un onglet par facture**.
+    """Produit un .xlsx pret a corriger : une ligne par facture, une colonne par
+    balise, la valeur du fichier dans la cellule.
 
-    Deux factures n'ont pas forcement les memes balises : un onglet unique
-    melangerait leurs structures et masquerait ce qui est propre a chacune. Une
-    regle inscrite sur l'onglet d'une facture ne vaudra donc que pour elle.
+    On corrige directement dans la cellule : pas de colonne « valeur actuelle »
+    d'un cote et « valeur attendue » de l'autre. Une cellule laissee telle quelle
+    ne declenche rien ; une cellule modifiee devient la valeur de reference.
 
-    Pour une regle qui doit valoir pour tout un lot sans dependre des noms de
-    fichiers, ajouter soi-meme un onglet nomme « Toutes les factures »,
-    « Communes » ou « Tous » : ces noms sont reconnus comme globaux.
+    Les occurrences repetees d'une meme balise portent leur rang
+    (`/Invoice/Note[2]`), faute de quoi elles se disputeraient une seule colonne.
 
     `documents` : liste de (nom de fichier, racine) — ou de racines seules.
     """
     paires = []
-    for element in documents:
+    for index, element in enumerate(documents, start=1):
         if isinstance(element, (list, tuple)) and len(element) == 2:
-            paires.append((str(element[0]), element[1]))
+            paires.append((str(element[0]) or "facture-%d.xml" % index, element[1]))
         else:
-            paires.append(("", element))
+            paires.append(("facture-%d.xml" % index, element))
 
-    def bloc(valeurs, entete_commentaire=""):
-        lignes = [ENTETES]
-        if entete_commentaire:
-            lignes.append(["", "", "", entete_commentaire])
-        for chemin, valeur, nombre in valeurs:
-            notes = []
-            if nombre > 1:
-                notes.append("%d valeurs différentes selon les fichiers" % nombre)
-            apercu = valeur
-            if len(valeur) > LIMITE_APERCU:
-                apercu = valeur[:LIMITE_APERCU] + "…"
-                notes.append("valeur tronquée pour l'affichage (%d caractères dans le "
-                             "fichier)" % len(valeur))
-            lignes.append([chemin, apercu, "", " ; ".join(notes)])
-        return lignes
-
-    feuilles: List[Tuple[str, List[List[str]]]] = []
-    utilises = set()
-    for index, (nom, racine) in enumerate(paires, start=1):
-        onglet = nom_feuille(nom) if nom else "Facture %d" % index
-        base, compteur = onglet, 2
-        while onglet in utilises:            # Excel refuse deux onglets homonymes
-            suffixe = " (%d)" % compteur
-            onglet = base[:31 - len(suffixe)] + suffixe
-            compteur += 1
-        utilises.add(onglet)
-        commentaire = ("Les règles écrites ici ne concernent que ce fichier."
-                       if len(paires) > 1 else "")
-        feuilles.append((onglet, bloc(collecter_valeurs([racine]), commentaire)))
-
-    return _ecrire_classeur(feuilles)
+    colonnes, par_fichier = valeurs_par_fichier(paires)
+    lignes = [[ENTETE_FICHIER] + colonnes]
+    for nom, valeurs in par_fichier.items():
+        lignes.append([nom] + [valeurs.get(chemin, "") for chemin in colonnes])
+    return _ecrire_classeur([("Factures", lignes)])

@@ -177,81 +177,79 @@ Le XSD contrôle la **structure** : quelles balises, dans quel ordre, de quel
 type. Il ne saura jamais qu'un numéro de TVA doit valoir `3145` et non `11234`.
 Cette source de vérité-là se fournit sous forme de classeur **Excel ou CSV**.
 
-Les valeurs attendues sont **écrites dans le fichier corrigé**, chacune précédée
-d'un commentaire rappelant l'ancienne valeur :
+**Déposez vos XML, cliquez *Générer le modèle Excel*.** Vous obtenez un tableau :
+une ligne par facture, une colonne par balise, la valeur du fichier dans la
+cellule.
+
+| Facture | /Invoice/ID | /Invoice/AccountingCost | /Invoice/Note[1] |
+|---|---|---|---|
+| facture-x454665.xml | x454665 | ancien | #BAR#B2B |
+| facture-y999.xml | y999 | autre | |
+
+**Corrigez directement dans la cellule**, puis redéposez le fichier. Pas de
+colonne « valeur actuelle » d'un côté et « valeur attendue » de l'autre : la
+cellule *est* la valeur attendue.
+
+- une cellule **laissée telle quelle** ne déclenche rien ;
+- une cellule **modifiée** devient la valeur de référence, écrite dans le XML
+  corrigé ;
+- une cellule **vide** signifie « pas de règle » — la balise n'est pas contrôlée.
+
+Chaque valeur remplacée est signalée dans le XML par un commentaire rappelant
+l'ancienne :
 
 ```xml
-<Vendeur>
-  <!-- VALEUR CORRIGÉE PAR LE CONTRÔLEUR XML/XSD d'après le référentiel :
-       « 11234 » remplacé par « 3145 ». TVA de notre société. À vérifier. -->
-  <TVA>3145</TVA>
-</Vendeur>
+<!-- VALEUR CORRIGÉE PAR LE CONTRÔLEUR XML/XSD d'après le référentiel :
+     « ancien » remplacé par « CR - 123 la cbx ». À vérifier. -->
+<AccountingCost>CR - 123 la cbx</AccountingCost>
 ```
 
-Un fichier peut donc être parfaitement conforme au XSD et produire quand même un
-corrigé, parce que ses **données** étaient fausses. Décochez *Appliquer les
-valeurs du référentiel* pour vous en tenir au signalement.
+Décochez *Appliquer les valeurs du référentiel* pour vous en tenir au
+signalement. Un fichier peut être parfaitement conforme au XSD et produire
+quand même un corrigé, parce que ses **données** étaient fausses.
 
-Une règle **ambiguë n'est jamais appliquée** : si elle vise plusieurs
-emplacements, l'endroit à corriger ne se devine pas — elle reste signalée.
+#### Occurrences répétées
 
-**Le plus simple : laisser l'application produire le modèle.** Déposez vos XML,
-cliquez *Générer le modèle Excel* : vous obtenez un classeur listant chaque
-balise, son chemin complet et sa valeur actuelle. Vous ne remplissez que la
-colonne « Valeur attendue », et vous redéposez le fichier. Aucun chemin à écrire
-à la main.
+Une balise peut apparaître plusieurs fois dans une facture — `cbc:Note`, les
+lignes de facture. Chaque occurrence a donc **sa propre colonne**, distinguée
+par son rang : `/Invoice/Note[1]`, `/Invoice/Note[2]`. Sans cela elles se
+disputeraient une seule colonne, et une seule règle.
+
+#### Rattachement des lignes
+
+La première colonne porte le nom du fichier. Le rapprochement ignore la casse,
+le chemin et l'extension : `facture-001` retrouve `facture-001.xml`. Une ligne
+dont le nom ne désigne aucun fichier du lot ne s'applique à rien.
+
+Pour une règle qui vaut pour **tout le lot** — votre propre numéro de TVA, la
+devise — nommez la ligne `Toutes les factures`, `Communes` ou `Tous` : ces noms
+sont reconnus comme globaux. Une ligne propre à une facture l'emporte alors sur
+la règle globale.
+
+#### Chemins
+
+Les chemins du modèle sont exacts et complets, vous n'avez rien à écrire. Si
+vous ajoutez une colonne à la main, trois écritures sont acceptées :
+
+| Écriture | Exemple |
+|---|---|
+| Nom seul | `DocumentCurrencyCode` |
+| Chemin abrégé | `AccountingSupplierParty//CompanyID` |
+| Chemin exact | `/Invoice/cac:AccountingSupplierParty/.../cbc:CompanyID` |
+
+Les préfixes d'espace de noms sont ignorés : `cbc:ID` ou `ID`, c'est identique.
+Si une règle vise **plusieurs emplacements portant des valeurs différentes**,
+l'application **refuse de deviner** : elle signale l'ambiguïté et affiche les
+chemins candidats.
 
 #### Valeurs volumineuses
 
-Une facture UBL peut porter une pièce jointe — un PDF encodé en base64 dans
-`cbc:EmbeddedDocumentBinaryObject` — de plusieurs centaines de milliers de
-caractères. Or Excel plafonne une cellule à **32 767 caractères** et « répare »
-silencieusement le fichier au-delà.
-
-La colonne « Valeur actuelle » est donc écourtée au-delà de **2 000
-caractères**, la colonne « Commentaire » précisant alors la longueur réelle. Ce
-seuil laisse passer en entier une note, une adresse ou un libellé ; seules les
-pièces jointes sont concernées. Pour l'ajuster, `LIMITE_APERCU` en tête de
-`xsdfix/referentiel.py`.
-
-La comparaison porte évidemment sur la valeur entière du fichier, pas sur
-l'aperçu : une règle reste exacte même sur une balise écourtée à l'affichage.
-
-#### Un onglet par facture
-
-Deux factures n'ont pas forcément les mêmes balises : un onglet unique
-mélangerait leurs structures et masquerait ce qui est propre à chacune. Le
-classeur généré contient donc **un onglet par facture**, nommé d'après le
-fichier, avec ses balises à elle.
-
-Une règle écrite sur un onglet **ne s'applique qu'à la facture correspondante**.
-Le rapprochement se fait sur le nom du fichier sans son extension ; Excel
-limitant les noms d'onglet à 31 caractères, les noms longs sont tronqués — des
-deux côtés de la même façon, la correspondance reste donc valable.
-
-Un onglet dont le nom ne désigne aucun fichier du lot **ne s'applique à rien**.
-C'est presque toujours un onglet resté d'un lot précédent, et l'appliquer à tout
-serait une mauvaise surprise.
-
-Pour une règle qui doit valoir pour **tout un lot** sans dépendre des noms de
-fichiers — votre propre numéro de TVA, la devise — ajoutez vous-même un onglet
-nommé `Toutes les factures`, `Communes` ou `Tous` : ces noms sont reconnus comme
-globaux. Une règle propre à une facture l'emporte alors sur la règle globale.
-
-#### Une valeur qui dépend de la facture
-
-Les colonnes « Balise clé » et « Valeur clé » conditionnent une règle :
-
-| Chemin | Valeur attendue | Balise clé | Valeur clé |
-|---|---|---|---|
-| `Vendeur/NumeroTVA` | `3145` | | |
-| `Client/NumeroTVA` | `FR55987654321` | `Client/Code` | `1084` |
-| `Client/NumeroTVA` | `FR12000000009` | `Client/Code` | `2201` |
-
-La première ligne est une **constante** : elle s'applique à tous les fichiers.
-Les deux suivantes ne s'appliquent qu'aux factures du client concerné. Une
-condition à moitié renseignée est signalée et la règle ignorée, plutôt
-qu'appliquée de travers.
+Une facture UBL peut porter une pièce jointe — un PDF encodé en base64 — de
+plusieurs centaines de milliers de caractères, alors qu'Excel plafonne une
+cellule à **32 767 caractères** et « répare » silencieusement le fichier au-delà.
+Les valeurs de plus de **2 000 caractères** sont donc écourtées à l'affichage
+(`LIMITE_APERCU` dans `xsdfix/referentiel.py`). La comparaison porte évidemment
+sur la valeur entière du fichier.
 
 En ligne de commande : `--referentiel mon-fichier.xlsx`.
 

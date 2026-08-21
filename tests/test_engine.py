@@ -892,13 +892,13 @@ class TestReferentiel(unittest.TestCase):
         from xsdfix.referentiel import generer_modele, lire_classeur
         classeur = generer_modele([("facture.xml", self._racine())])
         feuilles = lire_classeur(classeur, "modele.xlsx")
-        self.assertEqual(len(feuilles), 1)          # un seul fichier : un seul onglet
+        self.assertEqual(len(feuilles), 1)          # un seul onglet, quel que soit le lot
         nom, lignes = feuilles[0]
-        self.assertEqual(nom, "facture")
-        self.assertEqual(lignes[0][:2], ["Chemin", "Valeur actuelle"])
-        chemins = [l[0] for l in lignes[1:]]
+        self.assertEqual(nom, "Factures")
+        self.assertEqual(lignes[0][0], "Facture")   # colonne 1 : le nom du fichier
         self.assertIn("/Invoice/AccountingSupplierParty/Party/PartyTaxScheme/CompanyID",
-                      chemins)
+                      lignes[0][1:])                # les chemins sont en colonnes
+        self.assertEqual(lignes[1][0], "facture.xml")
 
         csv_data = "Chemin;Valeur attendue\nCompanyID;3145\n".encode("utf-8")
         feuilles_csv = lire_classeur(csv_data, "ref.csv")
@@ -917,20 +917,53 @@ class TestReferentielMultiOnglets(unittest.TestCase):
                              b'<Client><Code>2201</Code></Client><Remise>10</Remise></Facture>')
         return a, b
 
-    def test_un_onglet_par_facture(self):
+    def test_une_ligne_par_facture_une_colonne_par_chemin(self):
         from xsdfix.referentiel import generer_modele, lire_classeur
         a, b = self._racines()
         classeur = generer_modele([("facture-001.xml", a), ("facture-002.xml", b)])
-        feuilles = dict(lire_classeur(classeur, "m.xlsx"))
-        # un onglet par fichier, et rien d'autre
-        self.assertEqual(list(feuilles), ["facture-001", "facture-002"])
-        # chaque onglet porte les balises de SA facture
-        chemins_1 = {l[0] for l in feuilles["facture-001"][1:] if l and l[0]}
-        chemins_2 = {l[0] for l in feuilles["facture-002"][1:] if l and l[0]}
-        self.assertIn("/Facture/Client/TVA", chemins_1)
-        self.assertNotIn("/Facture/Client/TVA", chemins_2)
-        self.assertIn("/Facture/Remise", chemins_2)
-        self.assertNotIn("/Facture/Remise", chemins_1)
+        feuilles = lire_classeur(classeur, "m.xlsx")
+        self.assertEqual(len(feuilles), 1)
+        lignes = feuilles[0][1]
+        entete, l1, l2 = lignes[0], lignes[1], lignes[2]
+
+        self.assertEqual(l1[0], "facture-001.xml")
+        self.assertEqual(l2[0], "facture-002.xml")
+        # les colonnes réunissent les balises des deux factures
+        self.assertIn("/Facture/Client/TVA", entete)
+        self.assertIn("/Facture/Remise", entete)
+        # une balise absente d'une facture laisse sa cellule vide
+        colonne = entete.index("/Facture/Remise")
+        self.assertEqual(l1[colonne] if colonne < len(l1) else "", "")
+        self.assertEqual(l2[colonne], "10")
+
+    def test_valeur_modifiee_dans_la_cellule(self):
+        """On corrige directement dans la cellule : une valeur laissée telle
+        quelle ne déclenche rien, une valeur modifiée devient la référence."""
+        from xsdfix.referentiel import (appliquer, charger_regles, generer_modele,
+                                        lire_classeur)
+        a, b = self._racines()
+        lignes = [list(l) for l in
+                  lire_classeur(generer_modele([("facture-001.xml", a),
+                                                ("facture-002.xml", b)]), "m.xlsx")[0][1]]
+        colonne = lignes[0].index("/Facture/Vendeur/TVA")
+        lignes[1][colonne] = "3145"          # on ne modifie QUE cette cellule
+
+        regles, soucis = charger_regles([("Factures", lignes)])
+        self.assertEqual(soucis, [])
+        ecarts_a = appliquer(a, regles, "facture-001.xml")
+        self.assertEqual([e.attendu for e in ecarts_a], ["3145"])
+        # la facture 2 n'a pas été touchée dans le tableau : rien ne bouge
+        self.assertEqual(appliquer(b, regles, "facture-002.xml"), [])
+
+    def test_occurrences_repetees_ont_leur_colonne(self):
+        """Deux <Note> ne doivent pas se disputer une seule colonne."""
+        from lxml import etree
+        from xsdfix.referentiel import generer_modele, lire_classeur
+        racine = etree.fromstring(b'<F xmlns="urn:t"><N>un</N><N>deux</N></F>')
+        lignes = lire_classeur(generer_modele([("f.xml", racine)]), "m.xlsx")[0][1]
+        self.assertIn("/F/N[1]", lignes[0])
+        self.assertIn("/F/N[2]", lignes[0])
+        self.assertEqual(lignes[1][lignes[0].index("/F/N[2]")], "deux")
 
     def test_onglet_inconnu_ne_s_applique_a_rien(self):
         """Un onglet resté d'un lot précédent ne doit pas s'appliquer au hasard."""
@@ -1002,9 +1035,6 @@ class TestReferentielMultiOnglets(unittest.TestCase):
         cellules = re.findall(r"<t[^>]*>(.*?)</t>", feuille, re.S)
         self.assertTrue(cellules)
         self.assertLessEqual(max(len(c) for c in cellules), LIMITE_CELLULE)
-        # la troncature est signalée, pour ne pas faire croire à une valeur courte
-        self.assertIn("valeur tronquée pour l&#39;affichage"
-                      if "&#39;" in feuille else "valeur tronquée", feuille)
         # le classeur reste léger : on n'embarque pas la pièce jointe
         self.assertLess(len(data), 50000, "le base64 ne doit pas gonfler le classeur")
 

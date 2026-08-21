@@ -21,8 +21,8 @@ from lxml import etree
 
 from .corrector import Options
 from .flat_schema import compile_check, convert, looks_flat, namespaces_from_root
-from .referentiel import (charger_regles, collecter_valeurs, generer_modele,
-                          lire_classeur)
+from .referentiel import (charger_regles, generer_modele, lire_classeur,
+                          valeurs_par_fichier)
 from .service import AnalysisReport, InputFile, Session, build_zip
 
 _session: Optional[Session] = None
@@ -95,9 +95,8 @@ def template_base64(payload_json: str) -> str:
         return json.dumps({"ok": False,
                            "error": "Aucun XML lisible pour construire le modèle."})
     data = generer_modele(documents)
-    return json.dumps({"ok": True,
-                       "sheets": len(documents) + (1 if len(documents) > 1 else 0),
-                       "rows": len(collecter_valeurs([r for _, r in documents])),
+    colonnes, _ = valeurs_par_fichier(documents)
+    return json.dumps({"ok": True, "rows": len(documents), "columns": len(colonnes),
                        "content": base64.b64encode(data).decode("ascii")})
 
 
